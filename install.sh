@@ -146,10 +146,10 @@ echo -e "${G}[✓] Wordlist'ler hazır${N}"
 # ============================================================
 echo -e "${C}━━━ [3/7] Python bağımlılıkları kuruluyor... ━━━${N}"
 
-PIP_ARGS=""
+PIP_ARGS="--ignore-installed"
 # Python 3.11+ externally managed ortamlar için
 if python3 -c "import sys; sys.exit(0 if sys.version_info >= (3,11) else 1)" 2>/dev/null; then
-    PIP_ARGS="--break-system-packages"
+    PIP_ARGS="--ignore-installed --break-system-packages"
 fi
 
 pip3 install $PIP_ARGS --quiet mcp[cli] 2>/dev/null || pip3 install $PIP_ARGS mcp[cli]
