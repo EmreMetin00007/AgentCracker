@@ -1,6 +1,6 @@
 #!/bin/bash
 # ============================================================
-# Flag Cracker — OpenRouter Tek Key Kurulum Scripti (v2)
+# Flag Cracker — OpenRouter Tek Key Kurulum Scripti (v3)
 # Claude Code + Qwen + Hermes tek OpenRouter key ile çalışır.
 # ============================================================
 
@@ -8,7 +8,7 @@ set -e
 
 echo ""
 echo "╔══════════════════════════════════════════════════════════╗"
-echo "║  🔑 Flag Cracker — OpenRouter API Kurulumu (v2)         ║"
+echo "║  🔑 Flag Cracker — OpenRouter API Kurulumu (v3)         ║"
 echo "║  Claude Code + Qwen + Hermes tek key ile çalışacak      ║"
 echo "╚══════════════════════════════════════════════════════════╝"
 echo ""
@@ -44,14 +44,14 @@ HTTP_CODE=$(echo "$TEST_RESPONSE" | tail -1)
 if [ "$HTTP_CODE" == "200" ]; then
     echo "✅ API Key geçerli! qwen/qwen3.6-plus modeli erişilebilir."
 elif [ "$HTTP_CODE" == "401" ]; then
-    echo "❌ HATA: 401 — API Key geçersiz!"
+    echo "❌ HATA: 401 — API Key geçersiz veya hesap bulunamadı!"
     exit 1
 elif [ "$HTTP_CODE" == "402" ]; then
     echo "⚠️  UYARI: 402 — Yetersiz bakiye."
     read -p "Yine de devam? (e/h): " confirm
     [ "$confirm" != "e" ] && exit 1
 else
-    echo "⚠️  HTTP $HTTP_CODE — Devam ediliyor..."
+    echo "⚠️  HTTP $HTTP_CODE yanıtı! OpenRouter sunucularında yoğunluk olabilir..."
 fi
 
 # ── ADIM 3: Ortam Değişkenlerini Ayarla ──
@@ -66,19 +66,12 @@ cat >> ~/.bashrc << ENVBLOCK
 
 # --- Flag Cracker OpenRouter ---
 export OPENROUTER_API_KEY="$OPENROUTER_KEY"
-export ANTHROPIC_AUTH_TOKEN="$OPENROUTER_KEY"
-export ANTHROPIC_API_KEY=""
-export ANTHROPIC_BASE_URL="https://openrouter.ai/api"
+export ANTHROPIC_API_KEY="$OPENROUTER_KEY"
+export ANTHROPIC_BASE_URL="https://openrouter.ai/api/v1"
 export CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS="true"
+unset ANTHROPIC_AUTH_TOKEN
 # --- End Flag Cracker ---
 ENVBLOCK
-
-# Mevcut shell'e de uygula
-export OPENROUTER_API_KEY="$OPENROUTER_KEY"
-export ANTHROPIC_AUTH_TOKEN="$OPENROUTER_KEY"
-export ANTHROPIC_API_KEY=""
-export ANTHROPIC_BASE_URL="https://openrouter.ai/api"
-export CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS="true"
 
 echo "✅ .bashrc güncellendi"
 
@@ -110,20 +103,14 @@ echo "║  ✅ KURULUM TAMAMLANDI!                                 ║"
 echo "╠══════════════════════════════════════════════════════════╣"
 echo "║                                                          ║"
 echo "║  Ayarlanan değişkenler:                                  ║"
-echo "║  • OPENROUTER_API_KEY   → Qwen/Hermes tool'ları         ║"
-echo "║  • ANTHROPIC_AUTH_TOKEN → Claude Code auth               ║"
-echo "║  • ANTHROPIC_BASE_URL  → openrouter.ai/api              ║"
+echo "║  • OPENROUTER_API_KEY  → Qwen/Hermes tool'ları         ║"
+echo "║  • ANTHROPIC_API_KEY   → Claude Code (OpenRouter Key)   ║"
+echo "║  • ANTHROPIC_BASE_URL  → openrouter.ai/api/v1           ║"
 echo "║                                                          ║"
 echo "╚══════════════════════════════════════════════════════════╝"
 echo ""
-echo "🚀 Şimdi şu komutu çalıştırın:"
+echo "🚀 Şimdi şu komutları sırayla çalıştırın:"
 echo ""
 echo "   source ~/.bashrc"
-echo "   cd ~/AgentCracker"
 echo "   claude --model qwen/qwen3.6-plus"
-echo ""
-echo "Eğer model hatası alırsanız, /model yazıp listeden seçin."
-echo "Alternatif modeller:"
-echo "   qwen/qwen-2.5-coder-32b-instruct"
-echo "   qwen/qwen3.5-27b"
 echo ""
