@@ -50,6 +50,7 @@ CLAUDE_DIR="$REAL_HOME/.claude"
 MCP_KALI_PATH="$REPO_DIR/mcp-servers/mcp-kali-tools/server.py"
 MCP_CTF_PATH="$REPO_DIR/mcp-servers/mcp-ctf-platform/server.py"
 MCP_MEMORY_PATH="$REPO_DIR/mcp-servers/mcp-memory-server/server.py"
+MCP_TELEMETRY_PATH="$REPO_DIR/mcp-servers/mcp-telemetry/server.py"
 
 echo -e "${R}"
 cat << 'BANNER'
@@ -69,6 +70,40 @@ echo -e "${B}Home: $REAL_HOME${N}"
 echo -e "${B}Repo: $REPO_DIR${N}"
 echo -e "${B}Skills: $SKILLS_DIR${N}"
 echo ""
+
+# ============================================================
+# PHASE 0: ÖN KOŞULLAR — Node.js & Claude Code
+# ============================================================
+echo -e "${C}━━━ [0/7] Ön koşullar kontrol ediliyor... ━━━${N}"
+
+# Node.js kurulumu (Claude Code için gerekli)
+if ! command -v node &> /dev/null; then
+    echo -e "${Y}Node.js bulunamadı, kuruluyor (v20.x LTS)...${N}"
+    curl -fsSL https://deb.nodesource.com/setup_20.x | bash - 2>/dev/null
+    apt install -y -qq nodejs 2>/dev/null
+else
+    NODE_VER=$(node --version)
+    echo -e "  ${G}✓${N} Node.js zaten kurulu: $NODE_VER"
+fi
+
+# npm kontrolü
+if ! command -v npm &> /dev/null; then
+    echo -e "${Y}npm bulunamadı, kuruluyor...${N}"
+    apt install -y -qq npm 2>/dev/null
+fi
+
+# Claude Code CLI kurulumu
+if ! command -v claude &> /dev/null; then
+    echo -e "${Y}Claude Code kuruluyor (npm global)...${N}"
+    npm install -g @anthropic-ai/claude-code 2>/dev/null || {
+        echo -e "${R}Claude Code npm ile kurulamadı. Manuel kurulum gerekli.${N}"
+        echo -e "${C}Bkz: https://docs.anthropic.com/claude-code${N}"
+    }
+else
+    echo -e "  ${G}✓${N} Claude Code zaten kurulu: $(claude --version 2>/dev/null || echo 'mevcut')"
+fi
+
+echo -e "${G}[✓] Ön koşullar hazır${N}"
 
 # ============================================================
 # PHASE 1: SİSTEM ARAÇLARI
@@ -165,7 +200,53 @@ pip3 install $PIP_ARGS --quiet ropper 2>/dev/null || true
 pip3 install $PIP_ARGS --quiet owiener 2>/dev/null || true
 pip3 install $PIP_ARGS --quiet ciphey 2>/dev/null || true
 
+# v2.0: Güvenlik ve Observability katmanı
+pip3 install $PIP_ARGS --quiet keyring 2>/dev/null || true
+
+# v2.0: Knowledge Graph + Attack Path Planner
+pip3 install $PIP_ARGS --quiet networkx 2>/dev/null || true
+
+# v2.0: Phase 3 — Yeni araç bağımlılıkları
+pip3 install $PIP_ARGS --quiet trufflehog 2>/dev/null || true
+pip3 install $PIP_ARGS --quiet impacket 2>/dev/null || true
+pip3 install $PIP_ARGS --quiet frida-tools 2>/dev/null || true
+pip3 install $PIP_ARGS --quiet objection 2>/dev/null || true
+pip3 install $PIP_ARGS --quiet mitmproxy 2>/dev/null || true
+pip3 install $PIP_ARGS --quiet bloodhound 2>/dev/null || true
+
+# v2.0: Phase 4 — RAG Engine
+pip3 install $PIP_ARGS --quiet chromadb 2>/dev/null || true
+
+# v2.0: Phase 7 — Headless Browser & JS Analysis
+echo -e "${C}Phase 7: Headless browser & JS analysis araçları kuruluyor...${N}"
+pip3 install $PIP_ARGS --quiet playwright 2>/dev/null || true
+pip3 install $PIP_ARGS --quiet beautifulsoup4 2>/dev/null || true
+su - "$REAL_USER" -c 'playwright install chromium 2>/dev/null' || true
+echo -e "  ${G}✓${N} Playwright + Chromium"
+
+# angr (büyük paket, opsiyonel)
+echo -e "${C}angr kurulumu (symbolic execution, büyük paket)...${N}"
+pip3 install $PIP_ARGS --quiet angr 2>/dev/null || echo -e "  ${Y}⚠ angr kurulamadı (opsiyonel)${N}"
+
 echo -e "${G}[✓] Python bağımlılıkları kuruldu${N}"
+
+# v2.0: Go araçları (Phase 3 + Phase 7)
+echo -e "${C}Go araçları kuruluyor...${N}"
+if command -v go &>/dev/null; then
+    go install github.com/lc/gau/v2/cmd/gau@latest 2>/dev/null || true
+    go install github.com/tomnomnom/waybackurls@latest 2>/dev/null || true
+    go install github.com/assetnote/kiterunner/cmd/kr@latest 2>/dev/null || true
+    # Phase 7: Blind vulnerability detection & Subdomain takeover
+    go install -v github.com/projectdiscovery/interactsh/cmd/interactsh-client@latest 2>/dev/null || true
+    go install github.com/haccer/subjack@latest 2>/dev/null || true
+    echo -e "${G}[✓] Go araçları kuruldu (gau, waybackurls, kiterunner, interactsh, subjack)${N}"
+else
+    echo -e "${Y}[!] Go kurulu değil, Go araçları atlanıyor${N}"
+fi
+
+# v2.0: Sistem araçları (Phase 3 + Phase 7)
+apt install -y -qq gitleaks tesseract-ocr cutycapt wkhtmltopdf 2>/dev/null || true
+apt install -y -qq nodejs-js-beautify 2>/dev/null || npm install -g js-beautify 2>/dev/null || true
 
 # ============================================================
 # PHASE 4: GDB EKLENTİLERİ & RUBY GEM'LERİ
@@ -218,13 +299,16 @@ echo -e "${C}━━━ [6/7] MCP server'lar ve Claude Code yapılandırılıyor.
 # Claude dizini
 su - "$REAL_USER" -c "mkdir -p '$CLAUDE_DIR'" 2>/dev/null || mkdir -p "$CLAUDE_DIR"
 
-# OpenRouter API Key Sor (Hermes 405B Entegrasyonu)
+# OpenRouter API Key Sor (Qwen 3.6 Plus + Hermes 405B Entegrasyonu)
 echo -e ""
-echo -e "${Y}Hibrit Mimari (Hermes 405B) Entegrasyonu${N}"
+echo -e "${Y}Hibrit LLM Mimarisi — OpenRouter API Entegrasyonu${N}"
+echo -e "${C}Aynı API key ile 2 model kullanılır:${N}"
+echo -e "${C}  📊 Qwen 3.6 Plus  → Derin zafiyet/trafik/kod analizi${N}"
+echo -e "${C}  🔓 Hermes 405B    → Sansürsüz exploit payload üretimi${N}"
 read -p "OpenRouter API Key'inizi girin (Kullanmayacaksanız boş bırakıp Enter'a basın): " openrouter_key
 echo -e ""
 
-# .claude/settings.json — Global MCP server tanımları
+# .claude/settings.json — Global MCP server tanımları (v2.0: +telemetry +rag-engine)
 cat > "$CLAUDE_DIR/settings.json" << SETTINGS_EOF
 {
   "openrouter_api_key": "$openrouter_key",
@@ -248,11 +332,25 @@ cat > "$CLAUDE_DIR/settings.json" << SETTINGS_EOF
       "command": "python3",
       "args": ["$MCP_MEMORY_PATH"],
       "env": {}
+    },
+    "telemetry": {
+      "command": "python3",
+      "args": ["$MCP_TELEMETRY_PATH"],
+      "env": {}
+    },
+    "rag-engine": {
+      "command": "python3",
+      "args": ["$REPO_DIR/mcp-servers/mcp-rag-engine/server.py"],
+      "env": {}
     }
   }
 }
 SETTINGS_EOF
 chown "$REAL_USER:$REAL_USER" "$CLAUDE_DIR/settings.json"
+
+# Approval dizini oluştur (Human-in-the-Loop)
+mkdir -p "$CLAUDE_DIR/approvals"
+chown -R "$REAL_USER:$REAL_USER" "$CLAUDE_DIR/approvals"
 
 # Global CLAUDE.md (ana persona)
 cp "$REPO_DIR/CLAUDE.md" "$REAL_HOME/CLAUDE.md"
@@ -283,7 +381,7 @@ if [ ! -f "$REPO_DIR/.claude/rules/safety-rules.md" ]; then
 # Safety Rules — Operasyonel Güvenlik
 
 ## Credential Yönetimi
-- Bulunan şifreleri/token'ları ASLA loglamveya üçüncü partiye gönderme
+- Bulunan şifreleri/token'ları ASLA loglama veya üçüncü partiye gönderme
 - Session token'ları scope dışında kullanma
 - API key'leri düz metin olarak saklamaktan kaçın
 
@@ -329,6 +427,11 @@ check_file() {
         ((FAIL++))
     fi
 }
+
+echo -e "${Y}── Ön Koşullar ──${N}"
+check_tool node
+check_tool npm
+check_tool claude
 
 echo -e "${Y}── Ağ & Keşif ──${N}"
 check_tool nmap
@@ -381,6 +484,12 @@ done
 check_file "$MCP_KALI_PATH" "MCP: kali-tools"
 check_file "$MCP_CTF_PATH" "MCP: ctf-platform"
 check_file "$MCP_MEMORY_PATH" "MCP: memory-server"
+check_file "$MCP_TELEMETRY_PATH" "MCP: telemetry"
+
+echo -e "${Y}── v2.0 Güvenlik ──${N}"
+check_file "$CLAUDE_DIR/approvals" "Approval dizini"
+check_file "$REPO_DIR/.claude/rules/safety-rules.md" "Safety Rules v2.0"
+python3 -c "import keyring" 2>/dev/null && { echo -e "  ${G}✓${N} keyring"; ((PASS++)); } || { echo -e "  ${R}✗${N} keyring (opsiyonel)"; }
 
 echo ""
 echo -e "${B}════════════════════════════════════${N}"

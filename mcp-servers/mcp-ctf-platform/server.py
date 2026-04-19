@@ -451,6 +451,317 @@ def ctf_hash_identify(hash_value: str) -> str:
 
 
 # ============================================================
+# BUG BOUNTY SPESİFİK MODÜLLER (v2.0 — Phase 4)
+# ============================================================
+
+@mcp.tool()
+def bb_parse_scope(
+    program_url: str,
+    platform: str = "hackerone"
+) -> str:
+    """Bug bounty programının scope'unu otomatik çek ve parse et.
+
+    Args:
+        program_url: Program URL'si veya adı (ör: 'security' for hackerone.com/security)
+        platform: Platform ('hackerone', 'bugcrowd', 'intigriti')
+    """
+    try:
+        if platform == "hackerone":
+            # HackerOne API (public program info)
+            program_name = program_url.split("/")[-1] if "/" in program_url else program_url
+            api_url = f"https://hackerone.com/graphql"
+            # Basit scope çekme (public API)
+            resp = requests.get(
+                f"https://hackerone.com/{program_name}",
+                headers={"Accept": "application/json"},
+                timeout=15
+            )
+            if resp.status_code == 200:
+                return f"✓ {program_name} scope bilgisi:\n{resp.text[:2000]}"
+            else:
+                return f"Program bilgisi çekilemedi (HTTP {resp.status_code}). Manuel scope kontrolü yapın."
+
+        elif platform == "bugcrowd":
+            return f"Bugcrowd scope parser henüz implemente edilmedi. Manuel kontrol edin: {program_url}"
+        elif platform == "intigriti":
+            return f"Intigriti scope parser henüz implemente edilmedi. Manuel kontrol edin: {program_url}"
+        else:
+            return f"Bilinmeyen platform: {platform}"
+    except Exception as e:
+        return f"HATA: Scope çekilemedi: {e}"
+
+
+@mcp.tool()
+def bb_check_duplicate(
+    vulnerability_type: str,
+    target: str,
+    description: str = ""
+) -> str:
+    """Bulunan bug'ı public disclosure'larla karşılaştır.
+    HackerOne Hacktivity üzerinde benzer raporları arar.
+
+    Args:
+        vulnerability_type: Zafiyet tipi (ör: 'XSS', 'SSRF', 'IDOR')
+        target: Hedef domain/asset
+        description: Zafiyetin kısa açıklaması
+    """
+    try:
+        search_query = f"{vulnerability_type} {target}"
+        # HackerOne Hacktivity search
+        resp = requests.get(
+            "https://hackerone.com/hacktivity",
+            params={"querystring": search_query, "order_direction": "DESC", "order_field": "popular"},
+            headers={"Accept": "application/json"},
+            timeout=15
+        )
+
+        if resp.status_code == 200:
+            output = f"🔍 Duplicate Check: {vulnerability_type} on {target}\n{'='*50}\n"
+            output += f"HackerOne Hacktivity araması: '{search_query}'\n"
+            output += f"HTTP {resp.status_code} — Sonuçlar:\n{resp.text[:1500]}\n\n"
+            output += "⚠️ Sonuçları dikkatle inceleyin. Benzer rapor varsa duplicate olabilir.\n"
+            output += "💡 İpucu: Farklı bir endpoint, parametre veya impact gösterebilirseniz duplicate değildir."
+            return output
+        else:
+            return f"Hacktivity araması başarısız (HTTP {resp.status_code}). Manuel kontrol edin."
+    except Exception as e:
+        return f"HATA: Duplicate check başarısız: {e}"
+
+
+@mcp.tool()
+def bb_estimate_bounty(
+    severity: str,
+    vulnerability_type: str = "",
+    platform: str = "hackerone",
+    asset_type: str = "web"
+) -> str:
+    """Severity × Platform ortalama payout hesabı.
+
+    Args:
+        severity: CVSS severity (critical, high, medium, low)
+        vulnerability_type: Zafiyet tipi (opsiyonel, daha doğru tahmin için)
+        platform: Platform ('hackerone', 'bugcrowd')
+        asset_type: Asset tipi ('web', 'api', 'mobile', 'infrastructure')
+    """
+    # Platform bazlı ortalama payout'lar (USD)
+    avg_payouts = {
+        "hackerone": {
+            "critical": {"min": 2000, "avg": 5000, "max": 25000},
+            "high": {"min": 750, "avg": 2000, "max": 10000},
+            "medium": {"min": 250, "avg": 750, "max": 3000},
+            "low": {"min": 50, "avg": 200, "max": 1000},
+        },
+        "bugcrowd": {
+            "critical": {"min": 1500, "avg": 4000, "max": 20000},
+            "high": {"min": 500, "avg": 1500, "max": 8000},
+            "medium": {"min": 150, "avg": 500, "max": 2000},
+            "low": {"min": 50, "avg": 150, "max": 750},
+        },
+    }
+
+    # Vulnerability type bazlı bonuslar
+    vuln_multipliers = {
+        "rce": 2.0, "command_injection": 1.8, "sql_injection": 1.5,
+        "ssrf": 1.3, "xxe": 1.2, "idor": 1.0, "xss": 0.8,
+        "csrf": 0.6, "open_redirect": 0.4, "information_disclosure": 0.5,
+    }
+
+    sev = severity.lower()
+    plat = platform.lower()
+
+    payouts = avg_payouts.get(plat, avg_payouts["hackerone"])
+    if sev not in payouts:
+        return f"HATA: Geçersiz severity: {severity}. Kullanın: critical, high, medium, low"
+
+    p = payouts[sev]
+    multiplier = vuln_multipliers.get(vulnerability_type.lower().replace(" ", "_"), 1.0)
+
+    est_min = int(p["min"] * multiplier)
+    est_avg = int(p["avg"] * multiplier)
+    est_max = int(p["max"] * multiplier)
+
+    output = f"""💰 Bounty Tahmini
+{'='*40}
+  Platform: {platform.upper()}
+  Severity: {severity.upper()}
+  Zafiyet: {vulnerability_type or 'Genel'}
+  Asset: {asset_type}
+
+  💵 Tahmini Ödeme:
+     Min:  ${est_min:,}
+     Ort:  ${est_avg:,}
+     Max:  ${est_max:,}
+
+  {'📈 Multiplier: ' + str(multiplier) + 'x' if multiplier != 1.0 else ''}
+
+  💡 İpuçları:
+  - Impact'i net gösterin (admin erişimi, veri sızıntısı vb.)
+  - PoC'yi çalışır durumda verin
+  - Remediation önerisi ekleyin
+  - Scope dışı asset'lere dikkat
+"""
+    return output
+
+
+# ============================================================
+# CTF SPESİFİK MODÜLLER (v2.0 — Phase 4)
+# ============================================================
+
+@mcp.tool()
+def ctf_scoreboard_monitor(
+    ctfd_url: str = ""
+) -> str:
+    """Live CTF scoreboard'u çek — rakip takımların çözdüğü challenge'ları göster.
+
+    Args:
+        ctfd_url: CTFd URL (boş: env'den al)
+    """
+    url = ctfd_url or os.environ.get("CTFD_URL", "")
+    token = os.environ.get("CTFD_TOKEN", "")
+
+    if not url:
+        return "HATA: CTFd URL belirtilmedi. ctfd_url parametresi veya CTFD_URL env var kullanın."
+
+    url = url.rstrip("/")
+    headers = {"Authorization": f"Token {token}"} if token else {}
+
+    try:
+        # Scoreboard
+        resp = requests.get(f"{url}/api/v1/scoreboard", headers=headers, timeout=10)
+        resp.raise_for_status()
+        scoreboard = resp.json().get("data", [])
+
+        output = f"🏆 CTF Scoreboard: {url}\n{'='*50}\n"
+        output += f"{'Sıra':<5} {'Takım':<25} {'Puan':>8}\n"
+        output += "-" * 40 + "\n"
+        for i, team in enumerate(scoreboard[:20], 1):
+            name = team.get("name", "?")
+            score = team.get("score", 0)
+            output += f"#{i:<4} {name:<25} {score:>8}\n"
+
+        return output
+    except Exception as e:
+        return f"HATA: Scoreboard çekilemedi: {e}"
+
+
+@mcp.tool()
+def ctf_auto_writeup(
+    challenge_name: str,
+    category: str,
+    flag: str,
+    steps: str,
+    tools_used: str = "",
+    difficulty: str = "medium"
+) -> str:
+    """Çözüm sonrası otomatik writeup oluştur (markdown formatında).
+
+    Args:
+        challenge_name: Challenge adı
+        category: Kategori (Web, Pwn, Reverse, Crypto, Forensics, Misc)
+        flag: Bulunan flag
+        steps: Çözüm adımları (her adım yeni satırda)
+        tools_used: Kullanılan araçlar (virgülle ayrılmış)
+        difficulty: Zorluk (easy, medium, hard)
+    """
+    tools_list = [t.strip() for t in tools_used.split(",") if t.strip()] if tools_used else []
+
+    writeup = f"""# {challenge_name}
+
+## Bilgi
+| Alan | Değer |
+|------|-------|
+| **Kategori** | {category} |
+| **Zorluk** | {difficulty} |
+| **Flag** | `{flag}` |
+| **Araçlar** | {', '.join(tools_list) if tools_list else 'N/A'} |
+
+## Çözüm
+
+{steps}
+
+## Flag
+```
+{flag}
+```
+
+---
+*Otomatik oluşturuldu — HackerAgent v2.0*
+*Tarih: {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}*
+"""
+
+    # Dosyaya kaydet
+    safe_name = "".join(c if c.isalnum() or c in "-_ " else "" for c in challenge_name).replace(" ", "_")
+    writeup_path = f"/tmp/writeup_{safe_name}.md"
+    try:
+        with open(writeup_path, "w") as f:
+            f.write(writeup)
+    except Exception:
+        writeup_path = None
+
+    output = f"📝 Writeup oluşturuldu: {challenge_name}\n"
+    if writeup_path:
+        output += f"📁 Dosya: {writeup_path}\n"
+    output += f"\n{writeup}"
+    return output
+
+
+@mcp.tool()
+def ctf_difficulty_ranking(
+    ctfd_url: str = ""
+) -> str:
+    """Challenge'ları çözülme oranına göre kolay→zor sırala.
+
+    Args:
+        ctfd_url: CTFd URL (boş: env'den al)
+    """
+    url = ctfd_url or os.environ.get("CTFD_URL", "")
+    token = os.environ.get("CTFD_TOKEN", "")
+
+    if not url:
+        return "HATA: CTFd URL belirtilmedi."
+
+    url = url.rstrip("/")
+    headers = {"Authorization": f"Token {token}"} if token else {}
+
+    try:
+        resp = requests.get(f"{url}/api/v1/challenges", headers=headers, timeout=10)
+        resp.raise_for_status()
+        challenges = resp.json().get("data", [])
+
+        if not challenges:
+            return "Challenge bulunamadı."
+
+        # Çözülme oranına göre sırala
+        sorted_challenges = sorted(challenges, key=lambda x: x.get("solves", 0), reverse=True)
+
+        output = f"📊 Challenge Zorluk Sıralaması\n{'='*60}\n"
+        output += f"{'#':<4} {'Ad':<30} {'Kategori':<12} {'Çözüm':>6} {'Puan':>6}\n"
+        output += "-" * 60 + "\n"
+
+        for i, ch in enumerate(sorted_challenges, 1):
+            name = ch.get("name", "?")[:28]
+            cat = ch.get("category", "?")[:10]
+            solves = ch.get("solves", 0)
+            value = ch.get("value", 0)
+
+            # Zorluk emoji
+            if solves > 50:
+                diff = "🟢"
+            elif solves > 20:
+                diff = "🟡"
+            elif solves > 5:
+                diff = "🟠"
+            else:
+                diff = "🔴"
+
+            output += f"{diff}{i:<3} {name:<30} {cat:<12} {solves:>6} {value:>6}\n"
+
+        return output
+    except Exception as e:
+        return f"HATA: Challenge listesi çekilemedi: {e}"
+
+
+# ============================================================
 # SERVER BAŞLAT
 # ============================================================
 

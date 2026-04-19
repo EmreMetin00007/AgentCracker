@@ -13,6 +13,7 @@ import time
 import sqlite3
 import subprocess
 import os
+import sys
 
 DB_PATH = os.path.expanduser("~/.claude/agent_memory.db")
 

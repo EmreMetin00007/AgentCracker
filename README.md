@@ -25,8 +25,8 @@ claude
 - ✅ Tüm Kali güvenlik araçlarını kurar (nmap, sqlmap, ffuf, nuclei, hashcat, john, gdb, binwalk...)
 - ✅ Python bağımlılıklarını kurar (pwntools, mcp, z3, cryptodome...)
 - ✅ Wordlist'leri hazırlar (rockyou.txt, seclists)
-- ✅ 6 güvenlik skill'ini Claude Code'a yükler
-- ✅ 2 MCP server'ı yapılandırır
+- ✅ Skills'leri Claude Code'a yükler (6 güvenlik skill'i)
+- ✅ 3 MCP server'ı yapılandırır (kali-tools, ctf-platform, memory-server)
 - ✅ Global CLAUDE.md persona dosyasını kurar
 - ✅ GDB eklentilerini (GEF) ve Ruby gem'lerini kurar
 
@@ -50,12 +50,21 @@ claude
 | `ctf-solver` | Ana orkestratör — kategori tanımlama, iteratif çözüm |
 | `report-generator` | HackerOne rapor formatı, CVSS hesaplama, düzeltme önerileri |
 
-### ⚙️ 2 MCP Server
+### ⚙️ 3 MCP Server
 
 | Server | Araçlar |
 |--------|---------|
-| `kali-tools` | 25+ araç: nmap, ffuf, sqlmap, nikto, nuclei, hydra, hashcat, john, volatility... |
+| `kali-tools` | 25+ araç: nmap, ffuf, sqlmap, nikto, nuclei, hydra, hashcat, john, volatility, qwen_analyze, generate_exploit_poc... |
 | `ctf-platform` | CTFd, HackTheBox, TryHackMe API + decode/hash yardımcıları |
+| `memory-server` | SQLite kalıcı hafıza: findings, credentials, endpoints |
+
+### 🧬 Hibrit LLM Mimarisi
+
+| Model | Rol | Tetiklenme |
+|-------|-----|------------|
+| Claude Code | Ana orkestratör (Supervisor) | Her zaman aktif |
+| Qwen 3.6 Plus | Derin analiz motoru | Zafiyet analizi, trafik/kod/log inceleme |
+| Hermes 405B | PoC exploit üreteci | WAF bypass, exploit PoC üretimi |
 
 ### 📋 İş Akışları
 - **Bug Bounty Workflow** — 6 fazlı profesyonel süreç
@@ -119,12 +128,18 @@ HackerAgent/
 │   ├── mcp-kali-tools/
 │   │   ├── server.py
 │   │   └── requirements.txt
-│   └── mcp-ctf-platform/
+│   ├── mcp-ctf-platform/
+│   │   ├── server.py
+│   │   └── requirements.txt
+│   └── mcp-memory-server/
 │       ├── server.py
 │       └── requirements.txt
+├── scripts/                   # 🔄 Daemon'lar
+│   └── recon_daemon.py
 └── workflows/                 # 📋 İş akışları
     ├── bug-bounty-workflow.md
-    └── ctf-workflow.md
+    ├── ctf-workflow.md
+    └── supervisor-workflow.md
 ```
 
 ---
@@ -162,9 +177,11 @@ Bu sistem **yalnızca yasal ve etik** güvenlik testi amaçlarıyla kullanılmal
 - **200+ zafiyet tipi** (Web, Binary, Crypto, Forensics)
 - **150+ hazır payload** (SQLi, XSS, SSRF, LFI, CMDi, SSTI)
 - **25+ araç** MCP üzerinden
+- **3 LLM modeli** (Claude + Qwen 3.6 Plus + Hermes 405B)
 - **7 CTF kategorisi** için prosedürler
 - **CVSS hesaplama** ve rapor şablonları
 - **Kill Chain + OODA Loop** metodolojisi
+- **Kalıcı hafıza** (SQLite memory-server)
 
 ---
 

@@ -7,3 +7,16 @@ __pycache__/
 .venv/
 venv/
 env/
+
+# Test/validation scripts
+validate.py
+deep_audit.py
+idor_test.py
+
+# Agent çalışma dosyaları
+*.nmap
+*.gnmap
+*.xml
+loot/
+screenshots/
+challenge_files/
