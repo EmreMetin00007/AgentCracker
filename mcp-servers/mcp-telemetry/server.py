@@ -86,7 +86,7 @@ init_db()
 
 MODEL_COSTS = {
     "qwen/qwen3.6-plus": {"input": 0.50, "output": 1.50},
-    "nousresearch/hermes-3-llama-3.1-405b": {"input": 2.00, "output": 6.00},
+    "nousresearch/hermes-4-405b": {"input": 2.00, "output": 6.00},
     "anthropic/claude-sonnet-4": {"input": 3.00, "output": 15.00},
     "anthropic/claude-opus-4": {"input": 15.00, "output": 75.00},
 }
@@ -147,7 +147,7 @@ def log_llm_call(
     """Bir LLM API çağrısını (OpenRouter) telemetry'ye kaydet.
 
     Args:
-        model: Model adı (ör: qwen/qwen3.6-plus, nousresearch/hermes-3-llama-3.1-405b)
+        model: Model adı (ör: qwen/qwen3.6-plus, nousresearch/hermes-4-405b)
         prompt_tokens: Giriş token sayısı
         completion_tokens: Çıkış token sayısı
         latency_ms: Yanıt süresi (milisaniye)

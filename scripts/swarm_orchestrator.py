@@ -40,7 +40,7 @@ class AgentRole(str, Enum):
 # Model mapping
 ROLE_MODELS = {
     AgentRole.RECON: "qwen/qwen3.6-plus",
-    AgentRole.EXPLOIT: "nousresearch/hermes-3-llama-3.1-405b",
+    AgentRole.EXPLOIT: "nousresearch/hermes-4-405b",
     AgentRole.VALIDATE: "anthropic/claude-sonnet-4",
     AgentRole.REPORT: "anthropic/claude-sonnet-4",
 }

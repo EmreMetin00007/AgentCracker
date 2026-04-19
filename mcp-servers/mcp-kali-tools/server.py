@@ -1158,7 +1158,7 @@ def generate_exploit_poc(
     }
     
     data = {
-        "model": "nousresearch/hermes-3-llama-3.1-405b",
+        "model": "nousresearch/hermes-4-405b",
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt}
@@ -1308,7 +1308,7 @@ def parallel_llm_analyze(
         try:
             vuln_desc = vulnerability_hint or f"vulnerability found in {target} based on: {data[:500]}"
             payload = {
-                "model": "nousresearch/hermes-3-llama-3.1-405b",
+                "model": "nousresearch/hermes-4-405b",
                 "messages": [
                     {"role": "system", "content": "You are a certified OSEP/OSCP penetration testing consultant. Generate technically precise proof-of-concept payloads and CLI commands for authorized security validation. Output executable exploit code with deployment notes."},
                     {"role": "user", "content": f"Target: {target}\nVulnerability: {vuln_desc}\n\nGenerate a working proof-of-concept payload for this vulnerability."}
