@@ -4,6 +4,7 @@
   • Scope guard — host allowlist (safety.scope)
   • Circuit breaker — ardışık fail'lerde tool'u kısa süre bloke et
   • Auto-restart — server-wide fail eşiği aşılırsa MCP server'ı yeniden başlat
+  • Tool cache — aynı (tool, args) çağrısını TTL süresince MCP'ye göndermeden döndür
 """
 
 from __future__ import annotations
@@ -13,6 +14,7 @@ import json
 from hackeragent.core.circuit_breaker import CircuitBreaker
 from hackeragent.core.mcp_manager import MCPManager
 from hackeragent.core.scope import ScopeGuard
+from hackeragent.core.tool_cache import ToolCache
 from hackeragent.utils.logger import get_logger
 
 log = get_logger(__name__)
@@ -30,11 +32,13 @@ class ToolRouter:
         tool_timeout: int = 300,
         scope: ScopeGuard | None = None,
         breaker: CircuitBreaker | None = None,
+        cache: ToolCache | None = None,
     ):
         self.mcp = mcp
         self.tool_timeout = tool_timeout
         self.scope = scope or ScopeGuard()
         self.breaker = breaker or CircuitBreaker()
+        self.cache = cache or ToolCache()
         self._map: dict[str, tuple[str, str]] = {}
         self.refresh()
 
@@ -68,6 +72,13 @@ class ToolRouter:
             log.warning("Circuit open for %s", qname)
             return reason
 
+        # 3) Tool cache — daha önce aynı (tool, args) ile çağrıldıysa MCP'ye gitme
+        cached = self.cache.get(qname, args)
+        if cached is not None:
+            # Başarı sayılır — circuit breaker'da success kaydı
+            self.breaker.record_success(qname)
+            return f"[CACHED]\n{cached}"
+
         log.info("→ %s.%s %s", server, tool, json.dumps(args)[:200])
 
         try:
@@ -82,12 +93,13 @@ class ToolRouter:
             self._on_failure(qname, server, err)
             return err
 
-        # 3) Sonuç içeriğine göre success/failure
+        # 4) Sonuç içeriğine göre success/failure + cache'e yaz
         trimmed = (result or "").lstrip()
         if any(trimmed.startswith(p) for p in _FAILURE_PREFIXES):
             self._on_failure(qname, server, trimmed[:300])
         else:
             self.breaker.record_success(qname)
+            self.cache.put(qname, args, result)
 
         return result
 

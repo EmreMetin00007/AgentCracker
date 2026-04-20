@@ -188,6 +188,64 @@ def _handle_slash(orch: Orchestrator, console, line: str) -> bool:
             print(f"  premium:  {tiers.premium}")
         return True
 
+    if cmd == "/cache":
+        sub = parts[1].lower() if len(parts) > 1 else "stats"
+        if sub == "clear":
+            n = orch.tool_cache.invalidate()
+            if console:
+                console.print(f"[green]✓[/green] Cache temizlendi — {n} entry silindi.")
+            else:
+                print(f"Cache temizlendi — {n} entry silindi.")
+            return True
+        stats = orch.tool_cache.stats()
+        top = orch.tool_cache.top_entries(limit=10)
+        if HAS_RICH and console:
+            console.print(
+                f"[bold]♻️  Tool Cache[/bold]  enabled=[cyan]{stats['enabled']}[/cyan]  "
+                f"entries=[yellow]{stats['entries']}[/yellow]  "
+                f"lookups=[yellow]{stats['lookups']}[/yellow]  "
+                f"hits=[green]{stats['hits']}[/green]  "
+                f"rate=[green]{stats['hit_rate'] * 100:.1f}%[/green]  "
+                f"stores=[yellow]{stats['stores']}[/yellow]"
+            )
+            if top:
+                t = Table(title="Top cache entries", show_lines=False)
+                t.add_column("Key", style="yellow")
+                t.add_column("Age(s)", justify="right")
+                t.add_column("TTL(s)", justify="right")
+                t.add_column("Hits", justify="right", style="green")
+                t.add_column("Size", justify="right")
+                for e in top:
+                    t.add_row(e["key"][:60], str(e["age_s"]), str(e["ttl_s"]),
+                              str(e["hits"]), str(e["size_chars"]))
+                console.print(t)
+        else:
+            print(f"Cache: {stats}")
+        return True
+
+    if cmd == "/plan":
+        plan = orch.current_plan
+        if not plan:
+            if console:
+                console.print("[dim]Aktif plan yok.[/dim]")
+            else:
+                print("Aktif plan yok.")
+            return True
+        if HAS_RICH and console:
+            t = Table(title=f"🗺️  Plan — {plan.task[:60]}", show_lines=False)
+            t.add_column("#", style="cyan", justify="right")
+            t.add_column("Hedef", style="yellow")
+            t.add_column("Araçlar", style="dim")
+            t.add_column("Başarı Kriteri", style="green")
+            for s in plan.steps:
+                t.add_row(str(s.step), s.goal, ", ".join(s.expected_tools)[:50],
+                          s.success_criteria[:50])
+            console.print(t)
+        else:
+            for s in plan.steps:
+                print(f"  {s.step}. {s.goal} | tools={s.expected_tools}")
+        return True
+
     if cmd == "/scope":
         sub = parts[1].lower() if len(parts) > 1 else "list"
         if sub == "list":
@@ -228,6 +286,8 @@ def _handle_slash(orch: Orchestrator, console, line: str) -> bool:
             "  /sessions              Geçmiş session'ları göster\n"
             "  /budget                Mevcut maliyet özeti\n"
             "  /circuit               Circuit breaker istatistikleri (tool sağlığı)\n"
+            "  /cache [clear]         Tool cache istatistikleri / temizle\n"
+            "  /plan                  Aktif görev planını göster\n"
             "  /models                Akıllı model router tier'larını göster\n"
             "  /scope list            Aktif scope'u göster\n"
             "  /scope add <hedef>     Scope'a host/IP/CIDR ekle\n"

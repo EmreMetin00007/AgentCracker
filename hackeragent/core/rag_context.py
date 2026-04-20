@@ -1,11 +1,15 @@
-"""RAG / memory context enrichment.
+"""RAG / memory / attack-graph context enrichment.
 
 Her kullanıcı turundan önce:
   1. `rag-engine.rag_search` ile benzer geçmiş CVE/exploit/writeup bul
   2. `memory-server.get_target_memory` ile aynı hedefte geçmiş bulguları al
-  3. İlk 1500 token ile sınırlı bir "Geçmiş bilgi" system mesajı enjekte et
+  3. `memory-server.suggest_next_action` ile attack graph'ına bakarak
+     en yüksek öncelikli sonraki adım önerisini al (NEW — özellik #5)
+  4. İlk ~1500 token ile sınırlı bir "Geçmiş bilgi + graph önerisi" system
+     mesajı enjekte et
 
-RAG veya memory boşsa sessizce atlar. Tool call yapmadan (direct MCP call) çalışır.
+RAG / memory / graph boşsa sessizce atlar. Tool call yapmadan (direct MCP
+call) çalışır.
 """
 
 from __future__ import annotations
@@ -15,7 +19,7 @@ from hackeragent.utils.logger import get_logger
 
 log = get_logger(__name__)
 
-_MAX_CHARS = 4000  # ~1000 token, system prompt'u şişirmesin
+_MAX_CHARS = 5000  # ~1250 token, system prompt'u şişirmesin
 
 
 def enrich_from_rag_and_memory(
@@ -56,6 +60,22 @@ def enrich_from_rag_and_memory(
         except Exception as e:
             log.debug("Memory enrichment failed (ignored): %s", e)
 
+        # 3) Attack graph — akıllı sonraki adım önerisi
+        try:
+            suggest_result = mcp.call_tool(
+                "memory-server",
+                "suggest_next_action",
+                {"target": target},
+                timeout=10,
+            )
+            if suggest_result and not _looks_empty(suggest_result):
+                chunks.append(
+                    f"### 🗡️ Attack Graph Önerisi ({target})\n"
+                    + suggest_result.strip()[:1200]
+                )
+        except Exception as e:
+            log.debug("Attack graph enrichment failed (ignored): %s", e)
+
     if not chunks:
         return None
 
@@ -75,3 +95,4 @@ def _looks_empty(result: str) -> bool:
         "0 kayıt", "no match", "bulunmadı",
     ]
     return any(sig in text for sig in empty_signals)
+

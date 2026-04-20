@@ -15,6 +15,14 @@ Faz-B eklenti özellikleri:
   • 🔄 MCP auto-restart + circuit breaker (ToolRouter içinde)
   • 📚 RAG-enhanced context (her kullanıcı mesajından önce enjekte)
   • 🪞 Self-reflection loop (tool fail'de ucuz "düzelt" nudge'ı)
+
+Faz-C eklenti özellikleri:
+  • ♻️  Tool cache (aynı çağrıyı TTL süresince tekrar etmez)
+  • 📦 Prompt compression (eski turları ucuz LLM ile özetler)
+  • 🗡️  Attack graph enjeksiyonu (RAG enrichment içinde suggest_next_action)
+  • 🗺️  Planner-Executor (kompleks görevleri adımlara böler)
+  • ⚡ Paralel tool execution (güvenli tool'lar aynı anda koşar)
+  • 👁️  Vision / multimodal (browser_screenshot → image LLM'e gider)
 """
 
 from __future__ import annotations
@@ -25,15 +33,20 @@ from typing import Callable
 
 from hackeragent.core.budget import BudgetTracker
 from hackeragent.core.circuit_breaker import CircuitBreaker
+from hackeragent.core.compressor import Compressor
 from hackeragent.core.config import Config, get_config
 from hackeragent.core.llm_client import LLMClient, LLMReply
 from hackeragent.core.mcp_manager import MCPManager, tools_to_openai_schema
+from hackeragent.core.parallel_exec import execute_tool_calls
+from hackeragent.core.planner import Plan, Planner
 from hackeragent.core.prompt_engine import build_system_prompt
 from hackeragent.core.rag_context import enrich_from_rag_and_memory
 from hackeragent.core.router import ModelRouter, ModelTiers
 from hackeragent.core.scope import ScopeGuard
 from hackeragent.core.session import Session
+from hackeragent.core.tool_cache import ToolCache
 from hackeragent.core.tool_router import ToolRouter, _FAILURE_PREFIXES
+from hackeragent.core.vision import model_supports_vision, to_multimodal_tool_message
 from hackeragent.utils.logger import get_logger
 
 log = get_logger(__name__)
@@ -54,6 +67,9 @@ class Orchestrator:
     scope: ScopeGuard = field(init=False)
     budget: BudgetTracker = field(init=False)
     breaker: CircuitBreaker = field(init=False)
+    tool_cache: ToolCache = field(init=False)
+    compressor: Compressor = field(init=False)
+    planner: Planner = field(init=False)
     model_router: ModelRouter = field(init=False)
     session: Session = field(init=False)
     tools_schema: list[dict] = field(default_factory=list)
@@ -62,6 +78,11 @@ class Orchestrator:
     streaming_enabled: bool = True
     rag_enrich_enabled: bool = True
     reflection_enabled: bool = True
+    compression_enabled: bool = True
+    planner_enabled: bool = True
+    parallel_tools_enabled: bool = True
+    vision_enabled: bool = True
+    current_plan: Plan | None = None
     _started: bool = False
     _force_cheap_next: bool = False
 
@@ -89,16 +110,39 @@ class Orchestrator:
             cooldown_seconds=int(self.config.get("safety.circuit_cooldown_seconds", 60)),
             restart_server_after=int(self.config.get("safety.circuit_restart_after", 5)),
         )
+        # Tool cache — ToolRouter ile paylaşılacak
+        self.tool_cache = ToolCache(
+            enabled=bool(self.config.get("llm.tool_cache_enabled", True)),
+        )
         # Akıllı model router — config'den tier'ları yükle
         tiers = ModelTiers.from_config(self.config.get("llm.models", {}) or {})
         self.model_router = ModelRouter(
             tiers=tiers,
             enabled=bool(self.config.get("llm.router_enabled", True)),
         )
+        # Compressor — eski bağlamı ucuz LLM ile özetler
+        self.compressor = Compressor(
+            llm=self.llm,
+            cheap_model=tiers.cheap,
+            threshold_chars=int(self.config.get("llm.compression_threshold_chars", 40_000)),
+            keep_tail=int(self.config.get("llm.compression_keep_tail", 10)),
+            enabled=bool(self.config.get("llm.compression_enabled", True)),
+        )
+        # Planner — kompleks görevleri adımlara böler
+        self.planner = Planner(
+            llm=self.llm,
+            cheap_model=tiers.cheap,
+            enabled=bool(self.config.get("llm.planner_enabled", True)),
+            max_steps=int(self.config.get("llm.planner_max_steps", 6)),
+        )
         self.session = Session.new()
         self.streaming_enabled = bool(self.config.get("llm.streaming", True))
         self.rag_enrich_enabled = bool(self.config.get("rag.auto_enrich", True))
         self.reflection_enabled = bool(self.config.get("llm.self_reflection_enabled", True))
+        self.compression_enabled = bool(self.config.get("llm.compression_enabled", True))
+        self.planner_enabled = bool(self.config.get("llm.planner_enabled", True))
+        self.parallel_tools_enabled = bool(self.config.get("safety.parallel_tool_execution", True))
+        self.vision_enabled = bool(self.config.get("llm.vision_enabled", True))
 
     # ─── Lifecycle ────────────────────────────────────────────────────────
     def start(self) -> None:
@@ -111,6 +155,7 @@ class Orchestrator:
             tool_timeout=self.config.get("llm.tool_timeout_seconds", 300),
             scope=self.scope,
             breaker=self.breaker,
+            cache=self.tool_cache,
         )
         self.tools_schema = tools_to_openai_schema(self.mcp.list_tools())
         self.session.messages = [{"role": "system", "content": build_system_prompt()}]
@@ -183,6 +228,22 @@ class Orchestrator:
         if not self.session.target and _looks_like_target(user_input):
             self.session.target = _extract_target(user_input)
 
+        # 🗺️ Planner — kompleks görev ise adımlara böl ve system msg olarak enjekte et
+        if self.planner_enabled and self.current_plan is None:
+            try:
+                available_tools = [t.qualified_name for t in self.mcp.list_tools()]
+                plan = self.planner.plan(user_input, available_tools=available_tools)
+                if plan and not plan.is_empty():
+                    self.current_plan = plan
+                    plan_msg = plan.to_system_message()
+                    self.session.messages.append({"role": "system", "content": plan_msg})
+                    self._emit("planner", {"steps": len(plan.steps)})
+                    if plan.raw_reasoning:
+                        # Plan maliyetini yaklaşık kaydet (cheap model — gerçek cost API'den gelir)
+                        pass
+            except Exception as e:
+                log.debug("Planner atlandı: %s", e)
+
         max_iter = self.config.max_tool_iterations
         budget_stopped = False
 
@@ -192,6 +253,20 @@ class Orchestrator:
             if self.budget.should_stop:
                 budget_stopped = True
                 break
+
+            # 📦 Prompt compression — bağlam eşiği aşıldıysa ortadaki mesajları sıkıştır
+            if self.compression_enabled and self.compressor.should_compress(self.session.messages):
+                try:
+                    cr = self.compressor.compress(self.session.messages)
+                    if cr.compressed:
+                        self._emit("compression", {
+                            "removed": cr.removed_count,
+                            "before": cr.before_chars,
+                            "after": cr.after_chars,
+                        })
+                        self.session.save()
+                except Exception as e:
+                    log.warning("Compression hatası (atlandı): %s", e)
 
             # Wrap-up ipucu: LLM'e "bütçe bitiyor" haberini ver (1 kez)
             if self.budget.wrap_up_hint_needed:
@@ -270,16 +345,36 @@ class Orchestrator:
             # (yoksa yarım kalır, session tutarsız olur)
             any_failed = False
             failed_tools: list[str] = []
+            use_vision = self.vision_enabled and model_supports_vision(picked_model)
+
+            def _progress(tc, result, _f=failed_tools):
+                self._emit("tool_result", {"name": tc.get("name", "?"), "chars": len(result)})
+
+            # ⚡ Paralel yürütme — güvenli tool'lar aynı anda koşar
             for tc in reply.tool_calls:
                 self._emit("tool_call", {"name": tc["name"], "args": tc["arguments"]})
-                result = self.router.execute(tc)
+            tool_results = execute_tool_calls(
+                reply.tool_calls,
+                executor=self.router.execute,
+                max_workers=int(self.config.get("safety.parallel_max_workers", 5)),
+                parallel_enabled=self.parallel_tools_enabled,
+                on_progress=_progress,
+            )
+
+            for tc, result in tool_results:
                 self.session.tool_calls_count += 1
-                self._emit("tool_result", {"name": tc["name"], "chars": len(result)})
-                self.session.messages.append({
-                    "role": "tool",
-                    "tool_call_id": tc["id"] or "call_0",
-                    "content": result[:12000],
-                })
+                # 👁️ Vision: tool sonucu base64 image içeriyorsa multimodal format'a çevir
+                trimmed_result = result[:200000] if use_vision else result[:12000]
+                tool_msg = to_multimodal_tool_message(
+                    tool_call_id=tc.get("id") or "call_0",
+                    raw_result=trimmed_result,
+                    enabled=use_vision,
+                )
+                # Eğer multimodal değilse content'i 12k'ya kes
+                if isinstance(tool_msg.get("content"), str) and len(tool_msg["content"]) > 12000:
+                    tool_msg["content"] = tool_msg["content"][:12000]
+                self.session.messages.append(tool_msg)
+
                 # 🪞 Self-reflection detection — fail prefix'i ile başlıyorsa işaretle
                 trimmed = (result or "").lstrip()
                 if any(trimmed.startswith(p) for p in _FAILURE_PREFIXES):
@@ -341,6 +436,9 @@ class Orchestrator:
         if self._started:
             self.session.messages = [{"role": "system", "content": build_system_prompt()}]
         self.budget = BudgetTracker(max_cost_usd=self.budget.max_cost_usd)
+        self.current_plan = None
+        self.tool_cache.invalidate()  # yeni session → cache'i sıfırla
+        self._force_cheap_next = False
         self.session.save()
 
     def available_tools(self) -> list[tuple[str, str]]:

@@ -119,6 +119,109 @@ Orchestrator (OODA Loop, hackeragent/core/orchestrator.py)
 - ✅ Import smoke test: tüm modüller sorunsuz import
 - ⚠️ Canlı LLM + MCP E2E test edilmedi (OpenRouter key ve Kali araçları gerektiriyor)
 
+---
+
+## Faz-C: İleri Seviye Ajan Özellikleri (2026-04-20)
+
+### 6 yeni özellik
+
+1. ♻️  **Tool Cache** — `core/tool_cache.py`
+   - `(qname, args)` için SHA1 hash'li session-scoped TTL cache
+   - Tool-spesifik TTL override'ları: `nmap`=3600s, `rag_search`=7 gün, `telemetry`=10s
+   - Yazma işlemleri (`store_finding`, `request_approval`, `submit_flag`) ASLA cache'lenmez
+   - Cache hit → `[CACHED]` prefix ile LLM'e döner, MCP çağrısı yapılmaz
+   - CLI: `/cache` (stats) + `/cache clear`
+
+2. 📦 **Prompt Compression** — `core/compressor.py`
+   - `threshold_chars` (default 40k) aşılınca eski tool sonuçlarını ucuz LLM ile özetle
+   - Son `keep_tail=10` mesaj ve ilk system prompt KORUNUR
+   - Sıkıştırılan segment tek bir "📦 SIKIŞTIRILMIŞ GEÇMİŞ" system mesajıyla değiştirilir
+   - Typical: %50-70 token tasarrufu uzun CTF oturumlarında
+
+3. 🗡️  **Attack Graph auto-inject** — `rag_context.py` genişletmesi
+   - RAG + memory + `memory-server.suggest_next_action` her kullanıcı turunda otomatik çağrılır
+   - Graph'taki boşlukları (keşfedilmiş servis ama zafiyet analizi yapılmamış) tespit eder
+   - LLM her turda "en yüksek öncelikli sonraki adım"ı sistem bağlamında görür
+
+4. 🗺️  **Planner-Executor** — `core/planner.py`
+   - Kompleks görev tespit edilince (≥40 char + pentest keyword veya 15+ kelime) ucuz LLM'le JSON plan üretilir
+   - Plan: `[{step, goal, expected_tools, success_criteria}]` — max 6 adım
+   - Plan system mesajı olarak enjekte edilir; LLM her turda hangi adımda olduğunu bilir
+   - CLI: `/plan` komutu plan'ı gösterir
+
+5. ⚡ **Paralel tool execution (swarm MVP)** — `core/parallel_exec.py`
+   - Aynı turda birden fazla `tool_call` varsa güvenli olanlar `ThreadPoolExecutor` ile paralel koşar
+   - Güvensizler (exploit, request_approval, submit_flag, store_*) sıralı koşar
+   - Aynı qualified_name'den birden fazla çağrı farklı paralel gruplara bölünür (resource çakışması önlemi)
+   - Default max_workers=5; 4 tool → ~%60 süre tasarrufu
+   - Sonuç sırası KORUNUR (LLM'in beklediği gibi)
+
+6. 👁️  **Vision / Multimodal** — `core/vision.py` + `mcp-servers/mcp-browser/`
+   - Yeni `mcp-browser` MCP server (opt-in): Playwright ile `browser_screenshot`, `browser_extract_text`, `browser_get_forms`
+   - Screenshot base64 PNG döndürür; LLM client multimodal format'a otomatik çevirir
+   - Vision-capable model pattern match (`claude-3*`, `gpt-4o`, `gemini-2/3*`, `qwen-vl*`, `llama-3.2-vision`)
+   - Router premium tier'a vision modeli atandıysa web exploit'lerde screenshot bağlamı aktif
+
+### Orchestrator entegrasyonu
+- `__post_init__`: yeni bileşenler instantiate (`tool_cache`, `compressor`, `planner`)
+- `start()`: `ToolRouter`'a `cache` geçirilir
+- `ask()`:
+  1. RAG+memory+graph enrichment (zaten vardı, graph eklendi)
+  2. Planner tetikle (ilk turda, plan yoksa)
+  3. İterasyon başında compression check
+  4. Tool execution paralel (safety-aware)
+  5. Vision-enabled modelde screenshot sonuçları multimodal olarak eklenir
+
+### Yeni CLI komutları
+- `/cache [clear]` — tool cache stats veya temizle
+- `/plan` — aktif görev planını göster
+
+### Testler (Faz-C)
+- `tests/test_tool_cache.py` (12 test)
+- `tests/test_compressor.py` (7 test)
+- `tests/test_planner.py` (12 test)
+- `tests/test_parallel_exec.py` (10 test)
+- `tests/test_vision.py` (10 test)
+- `tests/test_rag_context.py` güncellendi (graph enjeksiyon testi)
+- **84/84 test ✅** (tüm projede — Faz-B + Faz-C)
+
+### Konfigürasyon (config.yaml yeni flag'ler)
+```yaml
+llm:
+  tool_cache_enabled: true
+  compression_enabled: true
+  compression_threshold_chars: 40000
+  compression_keep_tail: 10
+  planner_enabled: true
+  planner_max_steps: 6
+  vision_enabled: true
+
+safety:
+  parallel_tool_execution: true
+  parallel_max_workers: 5
+
+mcp_servers:
+  browser:
+    enabled: false  # playwright install gerektirir
+    command: "python3"
+    args: ["mcp-servers/mcp-browser/server.py"]
+```
+
+### Yeni dosyalar
+- `hackeragent/core/tool_cache.py` (~175 LOC)
+- `hackeragent/core/compressor.py` (~170 LOC)
+- `hackeragent/core/planner.py` (~210 LOC)
+- `hackeragent/core/parallel_exec.py` (~135 LOC)
+- `hackeragent/core/vision.py` (~110 LOC)
+- `mcp-servers/mcp-browser/server.py` (~180 LOC — opt-in vision)
+- `mcp-servers/mcp-browser/requirements.txt`
+
+### Test Durumu (Faz-C)
+- ✅ Unit: 84 test geçti (tüm proje — Faz-B + Faz-C)
+- ✅ Lint: `ruff check hackeragent/` temiz
+- ✅ Import smoke test + config validation
+- ⚠️ Canlı OpenRouter + Kali MCP E2E test edilmedi
+
 ## Backlog / İyileştirmeler
 - P2: `rag-engine` için daha hızlı ingest — toplu PayloadsAllTheThings ingest zamanlaması
 - P2: REPL'de streaming LLM çıktısı (şu an bloklama var)

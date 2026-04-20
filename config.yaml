@@ -48,6 +48,17 @@ llm:
   router_enabled: true
   # Self-reflection — tool fail sonrası LLM'e ucuz "düzelt" nudge'ı enjekte et.
   self_reflection_enabled: true
+  # Tool cache — aynı (tool, args) çağrısını TTL süresince MCP'ye göndermeden döndür.
+  tool_cache_enabled: true
+  # Prompt compression — bağlam X karakteri aşarsa eski turları ucuz LLM ile özetle.
+  compression_enabled: true
+  compression_threshold_chars: 40000
+  compression_keep_tail: 10
+  # Planner — kompleks kullanıcı görevlerini adımlara böl (cheap LLM ile).
+  planner_enabled: true
+  planner_max_steps: 6
+  # Vision / multimodal — browser_screenshot sonuçlarını vision-capable modele image olarak gönder.
+  vision_enabled: true
 
 # RAG-enhanced context — her kullanıcı mesajından önce rag-engine + memory-server
 # sorgularıyla ilgili kayıtları system ctx olarak enjekte eder.
@@ -82,11 +93,21 @@ mcp_servers:
     enabled: true
     command: "python3"
     args: ["mcp-servers/mcp-rag-engine/server.py"]
+  # Opsiyonel — playwright tabanlı browser (screenshot, form keşfi, vision)
+  # Etkinleştirmek için: pip install playwright && playwright install chromium
+  browser:
+    enabled: false
+    command: "python3"
+    args: ["mcp-servers/mcp-browser/server.py"]
 
 safety:
   # Bu operasyon tipleri için MCP kali-tools request_approval'ı zorunlu kılınır.
   require_approval: ["exploit", "lateral_movement", "flag_submit"]
   rate_limit_rps: 10
+  # Paralel tool yürütme — aynı turda birden fazla güvenli tool_call koşturulur.
+  # Güvensiz tool'lar (exploit, request_approval, submit_flag, store_*) sıralı koşar.
+  parallel_tool_execution: true
+  parallel_max_workers: 5
   # Scope enforcement — scope dışı host'lara yapılan tool çağrıları engellenir.
   # CLI'dan `--scope 10.10.10.5` veya REPL'de `/scope add ...` ile yönetilebilir.
   scope_enforcement: true

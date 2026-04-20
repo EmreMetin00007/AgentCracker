@@ -34,6 +34,8 @@ def test_enrich_combines_rag_and_memory():
             return "CVE-2024-0001: Critical RCE in nginx"
         if tool == "get_target_memory":
             return "Geçmiş finding: 443/tcp https açık, SSL cert expired"
+        if tool == "suggest_next_action":
+            return "🔴 #1 [CRITICAL] Exploit ara: CVE-2024-0001"
         return ""
     mcp.call_tool.side_effect = side_effect
 
@@ -43,6 +45,9 @@ def test_enrich_combines_rag_and_memory():
     assert "CVE-2024-0001" in result
     assert "Geçmiş Kayıtlar" in result
     assert "SSL cert expired" in result
+    # Attack graph önerisi de enjekte edildi
+    assert "Attack Graph Önerisi" in result
+    assert "CRITICAL" in result
 
 
 def test_enrich_skips_memory_when_no_target():
@@ -56,13 +61,16 @@ def test_enrich_skips_memory_when_no_target():
 
 def test_enrich_truncates_long_context():
     mcp = MagicMock()
-    # Her iki çağrıya da MAX_CHARS üstünde yanıt ver — birleşim kırpılmalı
+    # Her üç çağrıya da MAX_CHARS üstünde yanıt ver — birleşim kırpılmalı
     huge = "CVE-DATA-" + ("A" * 10000)
     mcp.call_tool.return_value = huge
     result = enrich_from_rag_and_memory(mcp, "q", target="t")
-    # 2000 (rag) + 1500 (memory) + başlıklar ≈ 3600 → kırpma tetiklenmeyebilir.
-    # En azından rag+memory'nin kendi 2000/1500 limitlerine uyduğunu doğrula.
-    assert len(result) <= 4200  # MAX_CHARS + marj
+    # 2000 (rag) + 1500 (memory) + 1200 (graph) + başlıklar ≈ 5200 → kırpılmalı
+    # _MAX_CHARS = 5000 + marj 200
+    assert len(result) <= 5300
+    # Çok uzunsa "kırpıldı" eklenir
+    if len(result) >= 5000:
+        assert "kırpıldı" in result or len(result) < 5200
 
 
 def test_enrich_survives_mcp_exceptions():

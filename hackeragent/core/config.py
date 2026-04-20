@@ -93,6 +93,13 @@ DEFAULTS: dict[str, Any] = {
         "max_tool_iterations": 25,
         "router_enabled": True,
         "self_reflection_enabled": True,
+        "tool_cache_enabled": True,
+        "compression_enabled": True,
+        "compression_threshold_chars": 40_000,
+        "compression_keep_tail": 10,
+        "planner_enabled": True,
+        "planner_max_steps": 6,
+        "vision_enabled": True,
     },
     "rag": {
         "auto_enrich": True,
@@ -129,10 +136,17 @@ DEFAULTS: dict[str, Any] = {
             "args": [str(MCP_SERVERS_DIR / "mcp-rag-engine" / "server.py")],
             "enabled": True,
         },
+        "browser": {
+            "command": "python3",
+            "args": [str(MCP_SERVERS_DIR / "mcp-browser" / "server.py")],
+            "enabled": False,  # playwright kurulumu gerektirir, opt-in
+        },
     },
     "safety": {
         "require_approval": ["exploit", "lateral_movement", "flag_submit"],
         "rate_limit_rps": 10,
+        "parallel_tool_execution": True,
+        "parallel_max_workers": 5,
     },
     "logging": {
         "level": "INFO",
