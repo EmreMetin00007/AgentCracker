@@ -9,6 +9,12 @@ Faz-A eklenti özellikleri:
   • Bütçe / cost guardrail (BudgetTracker)
   • Session persistence (her turda autosave)
   • Scope enforcement (ToolRouter içinde)
+
+Faz-B eklenti özellikleri:
+  • 🧠 Akıllı model router (cheap/standard/premium tier seçimi)
+  • 🔄 MCP auto-restart + circuit breaker (ToolRouter içinde)
+  • 📚 RAG-enhanced context (her kullanıcı mesajından önce enjekte)
+  • 🪞 Self-reflection loop (tool fail'de ucuz "düzelt" nudge'ı)
 """
 
 from __future__ import annotations
@@ -18,13 +24,16 @@ from dataclasses import dataclass, field
 from typing import Callable
 
 from hackeragent.core.budget import BudgetTracker
+from hackeragent.core.circuit_breaker import CircuitBreaker
 from hackeragent.core.config import Config, get_config
 from hackeragent.core.llm_client import LLMClient, LLMReply
 from hackeragent.core.mcp_manager import MCPManager, tools_to_openai_schema
 from hackeragent.core.prompt_engine import build_system_prompt
+from hackeragent.core.rag_context import enrich_from_rag_and_memory
+from hackeragent.core.router import ModelRouter, ModelTiers
 from hackeragent.core.scope import ScopeGuard
 from hackeragent.core.session import Session
-from hackeragent.core.tool_router import ToolRouter
+from hackeragent.core.tool_router import ToolRouter, _FAILURE_PREFIXES
 from hackeragent.utils.logger import get_logger
 
 log = get_logger(__name__)
@@ -44,12 +53,17 @@ class Orchestrator:
     router: ToolRouter = field(init=False)
     scope: ScopeGuard = field(init=False)
     budget: BudgetTracker = field(init=False)
+    breaker: CircuitBreaker = field(init=False)
+    model_router: ModelRouter = field(init=False)
     session: Session = field(init=False)
     tools_schema: list[dict] = field(default_factory=list)
     progress: ProgressCallback | None = None
     stream_callback: StreamCallback | None = None
     streaming_enabled: bool = True
+    rag_enrich_enabled: bool = True
+    reflection_enabled: bool = True
     _started: bool = False
+    _force_cheap_next: bool = False
 
     def __post_init__(self) -> None:
         self.llm = LLMClient(
@@ -69,8 +83,22 @@ class Orchestrator:
             list(scope_list),
             enabled=bool(self.config.get("safety.scope_enforcement", True)),
         )
+        # Circuit breaker — ToolRouter ile paylaşılacak tek instance
+        self.breaker = CircuitBreaker(
+            failure_threshold=int(self.config.get("safety.circuit_failure_threshold", 3)),
+            cooldown_seconds=int(self.config.get("safety.circuit_cooldown_seconds", 60)),
+            restart_server_after=int(self.config.get("safety.circuit_restart_after", 5)),
+        )
+        # Akıllı model router — config'den tier'ları yükle
+        tiers = ModelTiers.from_config(self.config.get("llm.models", {}) or {})
+        self.model_router = ModelRouter(
+            tiers=tiers,
+            enabled=bool(self.config.get("llm.router_enabled", True)),
+        )
         self.session = Session.new()
         self.streaming_enabled = bool(self.config.get("llm.streaming", True))
+        self.rag_enrich_enabled = bool(self.config.get("rag.auto_enrich", True))
+        self.reflection_enabled = bool(self.config.get("llm.self_reflection_enabled", True))
 
     # ─── Lifecycle ────────────────────────────────────────────────────────
     def start(self) -> None:
@@ -82,6 +110,7 @@ class Orchestrator:
             self.mcp,
             tool_timeout=self.config.get("llm.tool_timeout_seconds", 300),
             scope=self.scope,
+            breaker=self.breaker,
         )
         self.tools_schema = tools_to_openai_schema(self.mcp.list_tools())
         self.session.messages = [{"role": "system", "content": build_system_prompt()}]
@@ -133,6 +162,23 @@ class Orchestrator:
         if not self._started:
             self.start()
 
+        # 📚 RAG-enhanced context — user mesajından ÖNCE ilgili geçmiş kayıtları enjekte et
+        if self.rag_enrich_enabled:
+            try:
+                ctx = enrich_from_rag_and_memory(
+                    self.mcp,
+                    user_input,
+                    target=self.session.target or "",
+                )
+                if ctx:
+                    self.session.messages.append({
+                        "role": "system",
+                        "content": ctx,
+                    })
+                    self._emit("rag_enriched", {"chars": len(ctx)})
+            except Exception as e:
+                log.debug("RAG enrich atlandı: %s", e)
+
         self.session.messages.append({"role": "user", "content": user_input})
         if not self.session.target and _looks_like_target(user_input):
             self.session.target = _extract_target(user_input)
@@ -159,14 +205,26 @@ class Orchestrator:
                 })
                 self.budget.mark_wrap_up_sent()
 
-            self._emit("llm_call", {"iter": iteration + 1})
+            # 🧠 Akıllı model router — bu tur için en uygun modeli seç
+            if self._force_cheap_next:
+                picked_model = self.model_router.tiers.cheap
+                self._force_cheap_next = False
+                log.debug("Reflection nudge → cheap tier zorlandı: %s", picked_model)
+            else:
+                picked_model = self.model_router.pick(
+                    messages=self.session.messages,
+                    iteration=iteration,
+                    has_tools=bool(self.tools_schema),
+                )
+            self._emit("llm_call", {"iter": iteration + 1, "model": picked_model})
             try:
                 if self.streaming_enabled:
-                    reply = self._stream_once()
+                    reply = self._stream_once(model=picked_model)
                 else:
                     reply = self.llm.chat(
                         messages=self.session.messages,
                         tools=self.tools_schema or None,
+                        model=picked_model,
                     )
             except Exception as e:
                 # LLM hatası: session'ı temizle (son kullanıcı mesajı düşsün mü?)
@@ -189,9 +247,9 @@ class Orchestrator:
                 ]
             self.session.messages.append(assistant_msg)
 
-            # 2) SONRA bütçeyi kaydet
+            # 2) SONRA bütçeyi kaydet — gerçek kullanılan modelle birlikte
             if reply.cost_usd > 0:
-                self.budget.register(self.config.model_orchestrator, reply.cost_usd)
+                self.budget.register(picked_model, reply.cost_usd)
             self.session.total_cost_usd = self.budget.total_cost_usd
             self.session.save()
 
@@ -210,6 +268,8 @@ class Orchestrator:
             # 3) Tool çağrılarını yürüt — bunlar MCP tarafında çalışır, LLM maliyeti yok.
             # Bütçe bitmiş olsa BİLE bu turdaki tool'ları tamamlamak istiyoruz
             # (yoksa yarım kalır, session tutarsız olur)
+            any_failed = False
+            failed_tools: list[str] = []
             for tc in reply.tool_calls:
                 self._emit("tool_call", {"name": tc["name"], "args": tc["arguments"]})
                 result = self.router.execute(tc)
@@ -220,6 +280,26 @@ class Orchestrator:
                     "tool_call_id": tc["id"] or "call_0",
                     "content": result[:12000],
                 })
+                # 🪞 Self-reflection detection — fail prefix'i ile başlıyorsa işaretle
+                trimmed = (result or "").lstrip()
+                if any(trimmed.startswith(p) for p in _FAILURE_PREFIXES):
+                    any_failed = True
+                    failed_tools.append(tc.get("name", "?"))
+
+            # 🪞 Self-reflection nudge — tool başarısız olduysa bir sonraki turu ucuza al
+            if any_failed and self.reflection_enabled:
+                self.session.messages.append({
+                    "role": "system",
+                    "content": (
+                        f"🔄 REFLECT: Son tool çağrı(lar)ın başarısız oldu "
+                        f"({', '.join(failed_tools[:3])}). "
+                        "Hatayı kısaca analiz et ve farklı bir argüman ya da "
+                        "farklı bir araç dene. Aynı çağrıyı aynı argümanlarla tekrarlama. "
+                        "Kısa tut — uzun açıklamaya gerek yok."
+                    ),
+                })
+                self._force_cheap_next = True
+                self._emit("reflection", {"failed_tools": failed_tools})
             self.session.save()
 
         if budget_stopped:
@@ -236,12 +316,13 @@ class Orchestrator:
             f"Görev tam tamamlanamadı. Devam için: --resume {self.session.id}"
         )
 
-    def _stream_once(self) -> LLMReply:
+    def _stream_once(self, model: str | None = None) -> LLMReply:
         """Streaming tek LLM turu — delta'ları stream_callback'e yollar."""
         final_reply = LLMReply()
         for event in self.llm.chat_stream(
             messages=self.session.messages,
             tools=self.tools_schema or None,
+            model=model,
         ):
             if event["type"] == "delta":
                 if self.stream_callback:

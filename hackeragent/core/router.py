@@ -23,7 +23,7 @@ log = get_logger(__name__)
 _PREMIUM_KEYWORDS = re.compile(
     r"\b(exploit|payload|poc|bypass|shellcode|rop|gadget|canary|rce|"
     r"buffer overflow|format string|heap|use.after.free|"
-    r"rapor(?:la|umu)?|report|writeup|"
+    r"rapor\w*|report|writeup|"
     r"hermes|generate_exploit_poc)\b",
     re.IGNORECASE,
 )

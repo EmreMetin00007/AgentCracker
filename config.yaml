@@ -26,6 +26,13 @@ llm:
     analyzer: "qwen/qwen3.6-plus"
     exploit_gen: "nousresearch/hermes-4-405b"
     report: "qwen/qwen3.6-plus"
+    # Akıllı model router katmanları (opsiyonel).
+    # Boş bırakırsanız cheap → orchestrator, premium → exploit_gen'e düşer.
+    # Örnek maliyet odaklı config:
+    #   cheap:    "qwen/qwen3-8b-instruct"   (~$0.05/1M)
+    #   premium:  "anthropic/claude-3.5-sonnet"
+    cheap: ""
+    premium: ""
   max_tokens: 4096
   temperature: 0.3
   timeout_seconds: 120
@@ -36,6 +43,16 @@ llm:
   # Session bazlı maksimum OpenRouter maliyeti (USD). 0 = sınırsız.
   # Bu limite ulaşıldığında orkestratör durur.
   max_session_cost_usd: 0.0
+  # Akıllı model router — heuristik tier seçimi (cheap/standard/premium).
+  # Basit sohbet → cheap, exploit/rapor → premium, default → standard.
+  router_enabled: true
+  # Self-reflection — tool fail sonrası LLM'e ucuz "düzelt" nudge'ı enjekte et.
+  self_reflection_enabled: true
+
+# RAG-enhanced context — her kullanıcı mesajından önce rag-engine + memory-server
+# sorgularıyla ilgili kayıtları system ctx olarak enjekte eder.
+rag:
+  auto_enrich: true
 
 # MCP server tanımları — her biri stdio transport üzerinden subprocess
 # olarak başlatılır. `enabled: false` ile tek tek devre dışı bırakabilirsiniz.

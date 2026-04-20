@@ -83,11 +83,19 @@ DEFAULTS: dict[str, Any] = {
             "analyzer": "qwen/qwen3.6-plus",
             "exploit_gen": "nousresearch/hermes-4-405b",
             "report": "qwen/qwen3.6-plus",
+            # Router katmanları — boşsa orchestrator/exploit_gen'e düşer
+            "cheap": "",
+            "premium": "",
         },
         "max_tokens": 4096,
         "temperature": 0.3,
         "timeout_seconds": 120,
         "max_tool_iterations": 25,
+        "router_enabled": True,
+        "self_reflection_enabled": True,
+    },
+    "rag": {
+        "auto_enrich": True,
     },
     "mcp_servers": {
         "kali-tools": {

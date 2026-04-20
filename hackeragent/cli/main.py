@@ -140,6 +140,54 @@ def _handle_slash(orch: Orchestrator, console, line: str) -> bool:
             print(orch.budget_summary())
         return True
 
+    if cmd == "/circuit":
+        stats = orch.breaker.stats()
+        if not stats:
+            if console:
+                console.print("[dim]Henüz tool çağrısı yok — circuit breaker boş.[/dim]")
+            else:
+                print("Circuit breaker boş.")
+            return True
+        if HAS_RICH and console:
+            t = Table(title="🔄 Circuit Breaker", show_lines=False)
+            t.add_column("Tool", style="yellow")
+            t.add_column("Çağrı", justify="right")
+            t.add_column("Fail", justify="right", style="red")
+            t.add_column("Ardışık", justify="right")
+            t.add_column("Durum")
+            for qn, s in sorted(stats.items()):
+                status = "[red]OPEN[/red]" if s["open"] else "[green]closed[/green]"
+                t.add_row(
+                    qn, str(s["total_calls"]), str(s["total_failures"]),
+                    str(s["consecutive"]), status,
+                )
+            console.print(t)
+        else:
+            for qn, s in sorted(stats.items()):
+                status = "OPEN" if s["open"] else "closed"
+                print(f"  {qn}: calls={s['total_calls']} fail={s['total_failures']} "
+                      f"consec={s['consecutive']} [{status}]")
+        return True
+
+    if cmd == "/models":
+        tiers = orch.model_router.tiers
+        enabled = orch.model_router.enabled
+        if HAS_RICH and console:
+            t = Table(title=f"🧠 Model Router (enabled={enabled})", show_lines=False)
+            t.add_column("Tier", style="cyan")
+            t.add_column("Model", style="yellow")
+            t.add_column("Kullanım")
+            t.add_row("cheap", tiers.cheap, "Basit sohbet, ilk tur, kısa girdi")
+            t.add_row("standard", tiers.standard, "Orkestrasyon, tool analizi (default)")
+            t.add_row("premium", tiers.premium, "Exploit, rapor, uzun kod üretimi")
+            console.print(t)
+        else:
+            print(f"Model Router (enabled={enabled}):")
+            print(f"  cheap:    {tiers.cheap}")
+            print(f"  standard: {tiers.standard}")
+            print(f"  premium:  {tiers.premium}")
+        return True
+
     if cmd == "/scope":
         sub = parts[1].lower() if len(parts) > 1 else "list"
         if sub == "list":
@@ -179,6 +227,8 @@ def _handle_slash(orch: Orchestrator, console, line: str) -> bool:
             "  /tools                 Aktif MCP tool'larını listele\n"
             "  /sessions              Geçmiş session'ları göster\n"
             "  /budget                Mevcut maliyet özeti\n"
+            "  /circuit               Circuit breaker istatistikleri (tool sağlığı)\n"
+            "  /models                Akıllı model router tier'larını göster\n"
             "  /scope list            Aktif scope'u göster\n"
             "  /scope add <hedef>     Scope'a host/IP/CIDR ekle\n"
             "  /scope rm <hedef>      Scope'tan kaldır\n"
