@@ -44,11 +44,12 @@ class ModelTiers:
     @classmethod
     def from_config(cls, models_config: dict) -> "ModelTiers":
         """config.yaml llm.models bloğundan tier'ları parse et."""
-        standard = models_config.get("orchestrator", "qwen/qwen3.6-plus")
+        standard = models_config.get("orchestrator") or "qwen/qwen3.6-plus"
+        # `or` kullanıyoruz ki config'de "" olsa bile fallback tetiklensin
         return cls(
-            cheap=models_config.get("cheap", standard),
+            cheap=models_config.get("cheap") or standard,
             standard=standard,
-            premium=models_config.get("premium") or models_config.get("exploit_gen", standard),
+            premium=models_config.get("premium") or models_config.get("exploit_gen") or standard,
         )
 
 

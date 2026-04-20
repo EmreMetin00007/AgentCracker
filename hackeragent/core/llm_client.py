@@ -12,6 +12,7 @@ Kullanım:
 from __future__ import annotations
 
 import json
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Any, Iterator
@@ -21,6 +22,24 @@ import requests
 from hackeragent.utils.logger import get_logger
 
 log = get_logger(__name__)
+
+# OpenRouter 404 "No endpoints found that support tool use" hata mesajında
+# problematik tool adını yakalar: Try disabling "kali-tools__parallel_recon"
+# resp.text JSON olduğundan quote'lar \" olarak escape'li gelir — her iki format
+# (raw quote veya escape'li) için de eşleştir.
+_NO_ENDPOINTS_RE = re.compile(
+    r'No endpoints found.*?Try disabling \\?"([^"\\]+)\\?"',
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def _extract_bad_tool(err_text: str) -> str | None:
+    m = _NO_ENDPOINTS_RE.search(err_text or "")
+    return m.group(1) if m else None
+
+
+def _drop_tool(tools: list[dict], bad_name: str) -> list[dict]:
+    return [t for t in tools if (t.get("function") or {}).get("name") != bad_name]
 
 
 @dataclass
@@ -77,7 +96,7 @@ class LLMClient:
         model: str | None = None,
         max_tokens: int | None = None,
         temperature: float | None = None,
-        retries: int = 2,
+        retries: int = 3,
     ) -> LLMReply:
         """Tek turlu chat completion. Tool kullanacaksa `tools` gönderin."""
         payload: dict[str, Any] = {
@@ -89,13 +108,22 @@ class LLMClient:
         if tools:
             payload["tools"] = tools
             payload["tool_choice"] = "auto"
+            # OpenRouter provider routing — tool use destekleyen provider'a zorla.
+            # Bu, "No endpoints found that support tool use" 404 hatasını önler
+            # (bazı Qwen provider'ları structured outputs/tool calling desteklemiyor).
+            payload["provider"] = {"require_parameters": True}
 
         url = f"{self.base_url}/chat/completions"
         last_err: Exception | None = None
+        active_tools = list(tools) if tools else None
+        dropped_tools: list[str] = []
 
         for attempt in range(retries + 1):
             try:
-                log.debug("LLM call: model=%s tools=%d msgs=%d", payload["model"], len(tools or []), len(messages))
+                log.debug("LLM call: model=%s tools=%d msgs=%d",
+                          payload["model"], len(active_tools or []), len(messages))
+                if active_tools is not None:
+                    payload["tools"] = active_tools
                 resp = requests.post(url, headers=self._headers(), json=payload, timeout=self.timeout)
                 if resp.status_code == 429:
                     wait = 2 ** attempt
@@ -108,6 +136,26 @@ class LLMClient:
             except requests.exceptions.HTTPError as e:
                 last_err = e
                 log.error("HTTP %s from OpenRouter: %s", resp.status_code, resp.text[:500])
+                # 404 "No endpoints found that support tool use" → problematik tool'u
+                # parse edip exclude et ve retry yap (graceful degradation)
+                if resp.status_code == 404 and active_tools:
+                    bad = _extract_bad_tool(resp.text)
+                    if bad and bad not in dropped_tools:
+                        active_tools = _drop_tool(active_tools, bad)
+                        dropped_tools.append(bad)
+                        log.warning(
+                            "Tool '%s' provider tarafından reddedildi → exclude ederek retry "
+                            "(kalan tool: %d)", bad, len(active_tools),
+                        )
+                        continue
+                    # Tool drop edemezsek tool_choice="none" ile metin-sadece fallback
+                    if not dropped_tools:
+                        log.warning("Tool-capable provider bulunamadı → tools'suz retry")
+                        active_tools = None
+                        payload.pop("tools", None)
+                        payload.pop("tool_choice", None)
+                        payload.pop("provider", None)
+                        continue
                 if resp.status_code in (400, 401, 402, 404):
                     break  # retry'dan fayda yok
                 time.sleep(1 + attempt)
@@ -180,6 +228,8 @@ class LLMClient:
         if tools:
             payload["tools"] = tools
             payload["tool_choice"] = "auto"
+            # Tool use destekleyen provider'a yönlendir (404 "No endpoints" önlemi)
+            payload["provider"] = {"require_parameters": True}
 
         url = f"{self.base_url}/chat/completions"
         content_buf: list[str] = []
