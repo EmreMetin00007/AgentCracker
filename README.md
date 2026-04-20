@@ -101,7 +101,7 @@ hackeragent
 ## 🎯 Kullanım Örnekleri
 
 ```bash
-# İnteraktif REPL
+# İnteraktif REPL (streaming varsayılan aktif)
 hackeragent
 
 # REPL içinde:
@@ -110,25 +110,50 @@ hackeragent
 > Bu binary dosyasını analiz et ve exploit yaz
 > Bulduğum SQL injection için HackerOne raporu yaz
 
-# REPL komutları:
-/tools      # Aktif MCP araçlarını listele
-/reset      # Sohbet geçmişini sıfırla
-/exit       # Çık
+# REPL slash komutları:
+/tools                 # Aktif MCP araçlarını listele
+/sessions              # Geçmiş session'ları göster
+/budget                # Mevcut maliyet özeti
+/scope list            # Aktif scope'u göster
+/scope add 10.10.10.5  # Scope'a host/IP/CIDR ekle
+/scope rm example.com  # Scope'tan kaldır
+/scope clear           # Scope'u sıfırla
+/reset                 # Sohbet geçmişini sıfırla
+/help                  # Tüm komutlar
+/exit                  # Çık
 ```
 
 ```bash
-# Tek görev (REPL açmadan)
-hackeragent --task "10.10.10.10 portlarını tara"
+# Tek görev (REPL açmadan, streaming ile)
+hackeragent --task "10.10.10.10 portlarını tara" --scope 10.10.10.0/24
+
+# Bütçe limiti — $5 aşılırsa session durur
+hackeragent --budget 5.00
+
+# Streaming kapat (yavaş terminal için)
+hackeragent --no-stream
+
+# Session resume
+hackeragent --resume last           # Son session'a devam
+hackeragent --resume 20260420-...   # Belirli session ID
+hackeragent --list-sessions         # Tüm session'ları listele
 
 # Sadece araçları listele
 hackeragent --list-tools
 
-# Özel config
-hackeragent --config my-config.yaml
-
-# Debug logları
-hackeragent --log-level DEBUG
+# Özel config + debug log
+hackeragent --config my-config.yaml --log-level DEBUG
 ```
+
+### 🛡️ Güvenlik Özellikleri (Phase A)
+
+| Özellik | Açıklama |
+|---|---|
+| **Scope enforcement** | Scope dışı host'lara yapılan tool çağrıları bloklanır. OSINT servisleri (crt.sh, shodan, github vb.) otomatik allowlist'te. |
+| **Cost guardrail** | `max_session_cost_usd` aşılırsa döngü otomatik durur. OpenRouter'ın `usage.cost` alanından gerçek-zamanlı takip. |
+| **Session persistence** | Her turda `~/.hackeragent/sessions/<id>.json` — çökme sonrası `--resume last` ile devam. |
+| **Streaming yanıt** | Token-token ekrana yazılır — uzun Hermes yanıtlarını beklemezsiniz. UTF-8 multi-byte güvenli. |
+| **Structured parsers** | `nmap_scan_structured` ve `sqlmap_test_structured` → LLM raw çıktı parse etmek yerine yapılandırılmış JSON alır (daha doğru finding'ler). |
 
 ---
 

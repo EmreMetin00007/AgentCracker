@@ -6,14 +6,15 @@ proxy'si). Tool/function calling desteği OpenAI şemasıyla aynıdır.
 Kullanım:
     client = LLMClient(api_key=..., model="qwen/qwen3.6-plus")
     reply = client.chat(messages, tools=[...])
+    for chunk in client.chat_stream(messages, tools=[...]): ...
 """
 
 from __future__ import annotations
 
 import json
 import time
-from dataclasses import dataclass
-from typing import Any
+from dataclasses import dataclass, field
+from typing import Any, Iterator
 
 import requests
 
@@ -27,10 +28,11 @@ class LLMReply:
     """LLM yanıtının yapılandırılmış hali."""
 
     content: str = ""
-    tool_calls: list[dict] = None  # type: ignore
+    tool_calls: list[dict] = field(default_factory=list)
     finish_reason: str = ""
-    usage: dict = None  # type: ignore
-    raw: dict = None  # type: ignore
+    usage: dict = field(default_factory=dict)
+    cost_usd: float = 0.0
+    raw: dict = field(default_factory=dict)
 
     def has_tool_calls(self) -> bool:
         return bool(self.tool_calls)
@@ -140,12 +142,132 @@ class LLMClient:
                     "name": fn.get("name", ""),
                     "arguments": args,
                 })
+            usage = data.get("usage") or {}
             return LLMReply(
                 content=msg.get("content") or "",
                 tool_calls=tool_calls,
                 finish_reason=choice.get("finish_reason", ""),
-                usage=data.get("usage") or {},
+                usage=usage,
+                cost_usd=float(usage.get("cost", 0.0) or 0.0),
                 raw=data,
             )
         except (KeyError, IndexError, TypeError) as e:
             raise RuntimeError(f"Malformed LLM response: {e} | data={data}")
+
+    # ─── Streaming ────────────────────────────────────────────────────────
+    def chat_stream(
+        self,
+        messages: list[dict],
+        tools: list[dict] | None = None,
+        model: str | None = None,
+        max_tokens: int | None = None,
+        temperature: float | None = None,
+    ) -> Iterator[dict]:
+        """Token-by-token streaming.
+
+        Yield format (iki event tipi):
+          {"type": "delta", "content": "...parça..."}          # yazılacak metin
+          {"type": "done", "reply": LLMReply}                   # final LLMReply
+        """
+        payload: dict[str, Any] = {
+            "model": model or self.model,
+            "messages": messages,
+            "max_tokens": max_tokens or self.max_tokens,
+            "temperature": self.temperature if temperature is None else temperature,
+            "stream": True,
+            "usage": {"include": True},  # OpenRouter stream'e usage.cost ekler
+        }
+        if tools:
+            payload["tools"] = tools
+            payload["tool_choice"] = "auto"
+
+        url = f"{self.base_url}/chat/completions"
+        content_buf: list[str] = []
+        # tool_calls partial — OpenAI delta format: [{index, id?, function:{name?, arguments?}}]
+        tool_calls_partial: dict[int, dict] = {}
+        usage: dict = {}
+        finish_reason: str = ""
+
+        try:
+            with requests.post(
+                url, headers=self._headers(), json=payload, timeout=self.timeout, stream=True
+            ) as resp:
+                resp.raise_for_status()
+                # iter_lines yerine byte-level buffer — UTF-8 multi-byte güvenli
+                buf = bytearray()
+                for chunk in resp.iter_content(chunk_size=None, decode_unicode=False):
+                    if not chunk:
+                        continue
+                    buf.extend(chunk)
+                    while b"\n" in buf:
+                        raw_line_bytes, _, rest = buf.partition(b"\n")
+                        buf = bytearray(rest)
+                        try:
+                            line = raw_line_bytes.decode("utf-8").strip()
+                        except UnicodeDecodeError:
+                            # Nadir durum: satır bile UTF-8 parçalanmış; ham olarak atla
+                            continue
+                        if not line or line.startswith(":"):
+                            continue
+                        if not line.startswith("data: "):
+                            continue
+                        data_str = line[6:]
+                        if data_str == "[DONE]":
+                            buf = bytearray()
+                            break
+                        try:
+                            chunk_data = json.loads(data_str)
+                        except json.JSONDecodeError:
+                            continue
+
+                        choices = chunk_data.get("choices") or []
+                        if choices:
+                            delta = choices[0].get("delta") or {}
+                            if delta.get("content"):
+                                content_buf.append(delta["content"])
+                                yield {"type": "delta", "content": delta["content"]}
+
+                            for tc_delta in delta.get("tool_calls") or []:
+                                idx = tc_delta.get("index", 0)
+                                slot = tool_calls_partial.setdefault(
+                                    idx, {"id": "", "name": "", "arguments_raw": ""}
+                                )
+                                if tc_delta.get("id"):
+                                    slot["id"] = tc_delta["id"]
+                                fn = tc_delta.get("function") or {}
+                                if fn.get("name"):
+                                    slot["name"] = fn["name"]
+                                if fn.get("arguments"):
+                                    slot["arguments_raw"] += fn["arguments"]
+
+                            if choices[0].get("finish_reason"):
+                                finish_reason = choices[0]["finish_reason"]
+
+                        if chunk_data.get("usage"):
+                            usage = chunk_data["usage"]
+        except requests.exceptions.RequestException as e:
+            raise RuntimeError(f"LLM stream failed: {e}")
+
+        # Partial tool_calls'ı finalize et
+        final_tool_calls: list[dict] = []
+        for idx in sorted(tool_calls_partial.keys()):
+            slot = tool_calls_partial[idx]
+            try:
+                args = json.loads(slot["arguments_raw"]) if slot["arguments_raw"] else {}
+            except json.JSONDecodeError:
+                args = {"_raw": slot["arguments_raw"]}
+            final_tool_calls.append({
+                "id": slot["id"] or f"call_{idx}",
+                "name": slot["name"],
+                "arguments": args,
+            })
+
+        reply = LLMReply(
+            content="".join(content_buf),
+            tool_calls=final_tool_calls,
+            finish_reason=finish_reason,
+            usage=usage,
+            cost_usd=float(usage.get("cost", 0.0) or 0.0),
+            raw={"streamed": True},
+        )
+        yield {"type": "done", "reply": reply}

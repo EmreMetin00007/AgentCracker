@@ -3,6 +3,12 @@
 Kullanıcıdan görev alır, LLM'e gönderir, LLM tool çağırmak isterse bunları
 MCP üzerinden yürütür ve sonucu tekrar LLM'e geri besler. Tool çağrısı
 kalmayana kadar (veya iterasyon limiti aşılana kadar) döngü devam eder.
+
+Faz-A eklenti özellikleri:
+  • Streaming LLM yanıtı (delta callback üzerinden)
+  • Bütçe / cost guardrail (BudgetTracker)
+  • Session persistence (her turda autosave)
+  • Scope enforcement (ToolRouter içinde)
 """
 
 from __future__ import annotations
@@ -11,17 +17,21 @@ import json
 from dataclasses import dataclass, field
 from typing import Callable
 
+from hackeragent.core.budget import BudgetExceeded, BudgetTracker
 from hackeragent.core.config import Config, get_config
 from hackeragent.core.llm_client import LLMClient, LLMReply
 from hackeragent.core.mcp_manager import MCPManager, tools_to_openai_schema
 from hackeragent.core.prompt_engine import build_system_prompt
+from hackeragent.core.scope import ScopeGuard
+from hackeragent.core.session import Session
 from hackeragent.core.tool_router import ToolRouter
 from hackeragent.utils.logger import get_logger
 
 log = get_logger(__name__)
 
-# İsteğe bağlı streaming callback — CLI'dan enjekte edilir (tool çalışırken UX)
+# CLI'dan enjekte edilen callback tipleri
 ProgressCallback = Callable[[str, dict], None]
+StreamCallback = Callable[[str], None]  # her token/delta için
 
 
 @dataclass
@@ -32,9 +42,13 @@ class Orchestrator:
     llm: LLMClient = field(init=False)
     mcp: MCPManager = field(init=False)
     router: ToolRouter = field(init=False)
-    messages: list[dict] = field(default_factory=list)
+    scope: ScopeGuard = field(init=False)
+    budget: BudgetTracker = field(init=False)
+    session: Session = field(init=False)
     tools_schema: list[dict] = field(default_factory=list)
     progress: ProgressCallback | None = None
+    stream_callback: StreamCallback | None = None
+    streaming_enabled: bool = True
     _started: bool = False
 
     def __post_init__(self) -> None:
@@ -47,6 +61,16 @@ class Orchestrator:
             temperature=self.config.temperature,
         )
         self.mcp = MCPManager(self.config.mcp_servers)
+        self.budget = BudgetTracker(
+            max_cost_usd=float(self.config.get("llm.max_session_cost_usd", 0.0) or 0.0),
+        )
+        scope_list = self.config.get("safety.scope", []) or []
+        self.scope = ScopeGuard.from_list(
+            list(scope_list),
+            enabled=bool(self.config.get("safety.scope_enforcement", True)),
+        )
+        self.session = Session.new()
+        self.streaming_enabled = bool(self.config.get("llm.streaming", True))
 
     # ─── Lifecycle ────────────────────────────────────────────────────────
     def start(self) -> None:
@@ -57,83 +81,144 @@ class Orchestrator:
         self.router = ToolRouter(
             self.mcp,
             tool_timeout=self.config.get("llm.tool_timeout_seconds", 300),
+            scope=self.scope,
         )
         self.tools_schema = tools_to_openai_schema(self.mcp.list_tools())
-        self.messages = [{"role": "system", "content": build_system_prompt()}]
+        self.session.messages = [{"role": "system", "content": build_system_prompt()}]
+        self.session.save()
         self._started = True
         self._emit("ready", {
             "servers": self.mcp.active_servers(),
             "tool_count": len(self.tools_schema),
+            "session_id": self.session.id,
+            "budget": self.budget.max_cost_usd,
+            "scope": self.scope.list_raw(),
         })
 
     def shutdown(self) -> None:
         if not self._started:
             return
         try:
+            self.session.total_cost_usd = self.budget.total_cost_usd
+            self.session.save()
             self.mcp.stop()
         finally:
             self._started = False
 
-    # ─── Public API ───────────────────────────────────────────────────────
+    # ─── Session resume ────────────────────────────────────────────────────
+    def resume(self, session_id: str) -> None:
+        """Mevcut session'ı yükle (start() öncesinde çağır)."""
+        if self._started:
+            raise RuntimeError("resume() start()'tan önce çağrılmalı")
+        self.session = Session.load(session_id)
+        # System prompt'u yeniden üret (rules/skills değişmiş olabilir)
+        if self.session.messages and self.session.messages[0].get("role") == "system":
+            self.session.messages[0] = {"role": "system", "content": build_system_prompt()}
+        log.info("Session yüklendi: %s (%d mesaj)", self.session.id, len(self.session.messages))
+
+    # ─── Public conversation ──────────────────────────────────────────────
+    @property
+    def messages(self) -> list[dict]:
+        return self.session.messages
+
     def ask(self, user_input: str) -> str:
         """Kullanıcı mesajını işle, tool döngüsünü tamamla, nihai yanıtı döndür."""
         if not self._started:
             self.start()
 
-        self.messages.append({"role": "user", "content": user_input})
+        self.session.messages.append({"role": "user", "content": user_input})
+        if not self.session.target and _looks_like_target(user_input):
+            self.session.target = _extract_target(user_input)
+
         max_iter = self.config.max_tool_iterations
 
-        for iteration in range(max_iter):
-            self._emit("llm_call", {"iter": iteration + 1})
-            reply: LLMReply = self.llm.chat(
-                messages=self.messages,
-                tools=self.tools_schema or None,
+        try:
+            for iteration in range(max_iter):
+                self._emit("llm_call", {"iter": iteration + 1})
+
+                if self.streaming_enabled:
+                    reply = self._stream_once()
+                else:
+                    reply = self.llm.chat(
+                        messages=self.session.messages,
+                        tools=self.tools_schema or None,
+                    )
+
+                # Bütçe kaydı
+                if reply.cost_usd > 0:
+                    self.budget.register(self.config.model_orchestrator, reply.cost_usd)
+
+                # LLM mesajını geçmişe ekle (tool_calls dahil)
+                assistant_msg: dict = {"role": "assistant", "content": reply.content or ""}
+                if reply.has_tool_calls():
+                    assistant_msg["tool_calls"] = [
+                        {
+                            "id": tc["id"] or f"call_{i}",
+                            "type": "function",
+                            "function": {
+                                "name": tc["name"],
+                                "arguments": json.dumps(tc["arguments"], ensure_ascii=False),
+                            },
+                        }
+                        for i, tc in enumerate(reply.tool_calls)
+                    ]
+                self.session.messages.append(assistant_msg)
+                self.session.save()
+
+                if not reply.has_tool_calls():
+                    return reply.content or "(LLM boş yanıt döndü)"
+
+                # Tool çağrılarını sıralı yürüt
+                for tc in reply.tool_calls:
+                    self._emit("tool_call", {"name": tc["name"], "args": tc["arguments"]})
+                    result = self.router.execute(tc)
+                    self.session.tool_calls_count += 1
+                    self._emit("tool_result", {"name": tc["name"], "chars": len(result)})
+                    self.session.messages.append({
+                        "role": "tool",
+                        "tool_call_id": tc["id"] or "call_0",
+                        "content": result[:12000],
+                    })
+                self.session.save()
+
+            return (
+                f"⚠️ Maksimum tool iterasyonu ({max_iter}) aşıldı. "
+                f"Görev tam tamamlanamadı."
             )
+        except BudgetExceeded as e:
+            return f"🛑 BÜTÇE DURDU: {e}\n\n{self.budget.summary()}"
 
-            # LLM mesajını geçmişe ekle (tool_calls dahil)
-            assistant_msg: dict = {"role": "assistant", "content": reply.content or ""}
-            if reply.has_tool_calls():
-                assistant_msg["tool_calls"] = [
-                    {
-                        "id": tc["id"] or f"call_{i}",
-                        "type": "function",
-                        "function": {
-                            "name": tc["name"],
-                            "arguments": json.dumps(tc["arguments"], ensure_ascii=False),
-                        },
-                    }
-                    for i, tc in enumerate(reply.tool_calls)
-                ]
-            self.messages.append(assistant_msg)
-
-            if not reply.has_tool_calls():
-                return reply.content or "(LLM boş yanıt döndü)"
-
-            # Tool çağrılarını sıralı yürüt → sonuçları LLM'e geri besle
-            for tc in reply.tool_calls:
-                self._emit("tool_call", {"name": tc["name"], "args": tc["arguments"]})
-                result = self.router.execute(tc)
-                self._emit("tool_result", {"name": tc["name"], "chars": len(result)})
-                self.messages.append({
-                    "role": "tool",
-                    "tool_call_id": tc["id"] or "call_0",
-                    "content": result[:12000],  # çok büyük sonuçları kırp
-                })
-
-        return (
-            f"⚠️ Maksimum tool iterasyonu ({max_iter}) aşıldı. Görev tam tamamlanamadı."
-        )
+    def _stream_once(self) -> LLMReply:
+        """Streaming tek LLM turu — delta'ları stream_callback'e yollar."""
+        final_reply = LLMReply()
+        for event in self.llm.chat_stream(
+            messages=self.session.messages,
+            tools=self.tools_schema or None,
+        ):
+            if event["type"] == "delta":
+                if self.stream_callback:
+                    try:
+                        self.stream_callback(event["content"])
+                    except Exception:
+                        pass
+            elif event["type"] == "done":
+                final_reply = event["reply"]
+        return final_reply
 
     # ─── Helpers ──────────────────────────────────────────────────────────
     def reset(self) -> None:
         """Yeni session başlat — conversation history'yi temizle."""
+        self.session = Session.new()
         if self._started:
-            self.messages = [{"role": "system", "content": build_system_prompt()}]
-        else:
-            self.messages = []
+            self.session.messages = [{"role": "system", "content": build_system_prompt()}]
+        self.budget = BudgetTracker(max_cost_usd=self.budget.max_cost_usd)
+        self.session.save()
 
     def available_tools(self) -> list[tuple[str, str]]:
         return [(t.server, t.name) for t in self.mcp.list_tools()]
+
+    def budget_summary(self) -> str:
+        return self.budget.summary()
 
     def _emit(self, event: str, data: dict) -> None:
         log.debug("event=%s data=%s", event, data)
@@ -142,3 +227,15 @@ class Orchestrator:
                 self.progress(event, data)
             except Exception:
                 pass
+
+
+# ─── Util ─────────────────────────────────────────────────────────────────
+def _looks_like_target(text: str) -> bool:
+    from hackeragent.core.scope import _IPV4_RE, _DOMAIN_RE
+    return bool(_IPV4_RE.search(text) or _DOMAIN_RE.search(text))
+
+
+def _extract_target(text: str) -> str:
+    from hackeragent.core.scope import _IPV4_RE, _DOMAIN_RE
+    m = _IPV4_RE.search(text) or _DOMAIN_RE.search(text)
+    return m.group(0) if m else ""

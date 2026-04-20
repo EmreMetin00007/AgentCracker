@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 
 from hackeragent.core.mcp_manager import MCPManager
+from hackeragent.core.scope import ScopeGuard
 from hackeragent.utils.logger import get_logger
 
 log = get_logger(__name__)
@@ -13,9 +14,15 @@ log = get_logger(__name__)
 class ToolRouter:
     """LLM'in döndürdüğü tool_calls'ı MCP server'lara yönlendirir."""
 
-    def __init__(self, mcp: MCPManager, tool_timeout: int = 300):
+    def __init__(
+        self,
+        mcp: MCPManager,
+        tool_timeout: int = 300,
+        scope: ScopeGuard | None = None,
+    ):
         self.mcp = mcp
         self.tool_timeout = tool_timeout
+        self.scope = scope or ScopeGuard()
         # name → (server, tool_name) lookup (hızlı çözümleme)
         self._map: dict[str, tuple[str, str]] = {}
         self.refresh()
@@ -40,6 +47,13 @@ class ToolRouter:
                 return f"HATA: Tanımlı olmayan tool: '{qname}'"
 
         server, tool = route
+
+        # Scope guard — her tool çağrısından önce
+        ok, reason = self.scope.validate_args(qname, args)
+        if not ok:
+            log.warning("Scope guard blocked %s: %s", qname, reason)
+            return reason
+
         log.info("→ %s.%s %s", server, tool, json.dumps(args)[:200])
         try:
             result = self.mcp.call_tool(server, tool, args, timeout=self.tool_timeout)

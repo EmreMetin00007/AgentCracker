@@ -3699,6 +3699,155 @@ def get_rate_limit_status() -> str:
     return json.dumps(_rate_limit_config, indent=2)
 
 
+# ============================================================
+# STRUCTURED PARSERS (Phase A) — Nmap XML + sqlmap JSON → JSON
+# ============================================================
+
+@mcp.tool()
+def nmap_scan_structured(
+    target: str,
+    options: str = "-sV -T4 --top-ports 1000",
+    timeout_sec: int = 600,
+) -> str:
+    """Nmap taraması yap ve sonucu JSON olarak döndür (LLM için daha doğru).
+    Ham nmap çıktısı yerine host/port/service/script dict'leri döner.
+
+    Args:
+        target: Hedef IP/domain/CIDR
+        options: nmap argümanları (varsayılan: -sV -T4 --top-ports 1000)
+        timeout_sec: Max tarama süresi (default 600s)
+    """
+    import xml.etree.ElementTree as _ET
+
+    # Güvenlik kontrolü
+    full_cmd = f"nmap {options} {target}"
+    ok, reason = validate_command(full_cmd)
+    if not ok:
+        return reason
+
+    # -oX - ile XML çıktı al
+    xml_cmd = f"nmap {options} -oX - {shlex.quote(target)}"
+    result = run_command(xml_cmd, timeout=timeout_sec)
+    if not result["success"] and not result["stdout"]:
+        return json.dumps({
+            "error": "nmap başarısız",
+            "stderr": result["stderr"][:500],
+            "target": target,
+        })
+
+    try:
+        root = _ET.fromstring(result["stdout"])
+    except _ET.ParseError as e:
+        return json.dumps({"error": f"XML parse başarısız: {e}", "raw": result["stdout"][:800]})
+
+    hosts: list[dict] = []
+    for host_el in root.findall("host"):
+        addr_el = host_el.find("address")
+        ip = addr_el.get("addr") if addr_el is not None else ""
+        status_el = host_el.find("status")
+        state = status_el.get("state") if status_el is not None else "unknown"
+        hostnames = [h.get("name") for h in host_el.findall("hostnames/hostname") if h.get("name")]
+
+        ports: list[dict] = []
+        for p in host_el.findall("ports/port"):
+            port_num = int(p.get("portid", 0))
+            proto = p.get("protocol", "")
+            state_el = p.find("state")
+            port_state = state_el.get("state") if state_el is not None else ""
+            svc = p.find("service")
+            service = {
+                "name": svc.get("name", "") if svc is not None else "",
+                "product": svc.get("product", "") if svc is not None else "",
+                "version": svc.get("version", "") if svc is not None else "",
+                "extrainfo": svc.get("extrainfo", "") if svc is not None else "",
+                "cpe": [c.text for c in (svc.findall("cpe") if svc is not None else []) if c.text],
+            }
+            scripts = [
+                {"id": s.get("id", ""), "output": (s.get("output") or "")[:800]}
+                for s in p.findall("script")
+            ]
+            ports.append({
+                "port": port_num, "protocol": proto, "state": port_state,
+                "service": service, "scripts": scripts,
+            })
+
+        os_el = host_el.find("os/osmatch")
+        os_guess = {
+            "name": os_el.get("name", "") if os_el is not None else "",
+            "accuracy": os_el.get("accuracy", "") if os_el is not None else "",
+        }
+
+        hosts.append({
+            "ip": ip, "state": state, "hostnames": hostnames,
+            "os": os_guess, "ports": ports,
+            "open_port_count": sum(1 for p in ports if p["state"] == "open"),
+        })
+
+    runstats_el = root.find("runstats/finished")
+    summary = {
+        "target": target,
+        "options": options,
+        "hosts_scanned": len(hosts),
+        "total_open_ports": sum(h["open_port_count"] for h in hosts),
+        "elapsed_sec": runstats_el.get("elapsed") if runstats_el is not None else "",
+        "hosts": hosts,
+    }
+    return json.dumps(summary, indent=2, ensure_ascii=False)
+
+
+@mcp.tool()
+def sqlmap_test_structured(
+    target_url: str,
+    options: str = "--batch --level=2 --risk=1",
+    timeout_sec: int = 900,
+) -> str:
+    """sqlmap taramasını JSON çıktısıyla çalıştır; önemli bulgulara ait yapılandırılmış özet döndürür.
+
+    Args:
+        target_url: Hedef URL (parametreleriyle birlikte)
+        options: sqlmap argümanları (varsayılan: --batch --level=2 --risk=1)
+        timeout_sec: Max çalışma süresi (default 900s)
+    """
+    # Geçici output dir
+    out_dir = tempfile.mkdtemp(prefix="sqlmap_", dir="/tmp")
+    cmd = f"sqlmap -u {shlex.quote(target_url)} {options} --batch --output-dir={shlex.quote(out_dir)}"
+    ok, reason = validate_command(cmd)
+    if not ok:
+        return reason
+    result = run_command(cmd, timeout=timeout_sec)
+
+    # sqlmap output-dir'i altında target klasörü ve log dosyaları oluşur
+    summary = {
+        "target": target_url,
+        "returncode": result["returncode"],
+        "vulnerable": False,
+        "dbms": "",
+        "techniques": [],
+        "injectable_params": [],
+        "log_excerpt": "",
+    }
+
+    stdout = result.get("stdout", "")
+    # Temel pattern'ler
+    if "is vulnerable" in stdout or "are vulnerable" in stdout:
+        summary["vulnerable"] = True
+    m_dbms = re.search(r"back-end DBMS:\s*(.+)", stdout)
+    if m_dbms:
+        summary["dbms"] = m_dbms.group(1).strip().splitlines()[0][:120]
+    # Teknikler
+    for tech in ["boolean-based blind", "time-based blind", "error-based", "UNION query", "stacked queries"]:
+        if tech.lower() in stdout.lower():
+            summary["techniques"].append(tech)
+    # Parametre(ler)
+    for m in re.finditer(r"Parameter:\s*(\S+)\s*\(([^)]+)\)", stdout):
+        summary["injectable_params"].append({"param": m.group(1), "place": m.group(2)})
+
+    # Log'un son 2000 karakteri (LLM için)
+    summary["log_excerpt"] = stdout[-2000:]
+
+    return json.dumps(summary, indent=2, ensure_ascii=False)
+
+
 if __name__ == "__main__":
     import sys
     

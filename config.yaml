@@ -31,6 +31,11 @@ llm:
   timeout_seconds: 120
   max_tool_iterations: 25
   tool_timeout_seconds: 300
+  # Streaming (token-by-token) — REPL'de anında çıktı
+  streaming: true
+  # Session bazlı maksimum OpenRouter maliyeti (USD). 0 = sınırsız.
+  # Bu limite ulaşıldığında orkestratör durur.
+  max_session_cost_usd: 0.0
 
 # MCP server tanımları — her biri stdio transport üzerinden subprocess
 # olarak başlatılır. `enabled: false` ile tek tek devre dışı bırakabilirsiniz.
@@ -65,6 +70,13 @@ safety:
   # Bu operasyon tipleri için MCP kali-tools request_approval'ı zorunlu kılınır.
   require_approval: ["exploit", "lateral_movement", "flag_submit"]
   rate_limit_rps: 10
+  # Scope enforcement — scope dışı host'lara yapılan tool çağrıları engellenir.
+  # CLI'dan `--scope 10.10.10.5` veya REPL'de `/scope add ...` ile yönetilebilir.
+  scope_enforcement: true
+  scope:
+    # - "10.10.10.0/24"
+    # - "*.example.com"
+    # - "ctf.lab"
 
 logging:
   level: "INFO"
