@@ -140,13 +140,37 @@ class MCPManager:
 
     # ─── Internal coroutines ──────────────────────────────────────────────
     async def _start_all(self) -> None:
+        # MCP SDK varsayılanı sadece HOME+PATH'i subprocess'e geçiriyor. HackerAgent
+        # MCP server'ları OpenRouter key + HACKERAGENT_HOME gibi env var'larına ihtiyaç
+        # duyuyor → bunları açıkça ilet.
+        import os as _os
+        PASSTHROUGH_ENV = {
+            "OPENROUTER_API_KEY",
+            "HACKERAGENT_HOME",
+            "HOME",
+            "PATH",
+            "LANG",
+            "LC_ALL",
+            "USER",
+            "PYTHONPATH",
+            "PYTHONUNBUFFERED",
+            "CTFD_URL",
+            "CTFD_TOKEN",
+            "HTB_TOKEN",
+            "THM_TOKEN",
+        }
+        base_env = {k: v for k, v in _os.environ.items() if k in PASSTHROUGH_ENV and v}
+
         for name, cfg in self.servers_config.items():
             if not cfg.get("enabled", True):
                 continue
+            # Merge: base inherited env + explicit per-server overrides
+            server_env = dict(base_env)
+            server_env.update(cfg.get("env") or {})
             params = StdioServerParameters(
                 command=cfg.get("command", "python3"),
                 args=list(cfg.get("args", [])),
-                env={**cfg.get("env", {})} if cfg.get("env") else None,
+                env=server_env,
             )
             conn = _Connection(name, params)
             try:
