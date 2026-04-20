@@ -1,7 +1,7 @@
 # Supervisor Workflow v2.0
 **Ajan Koordinasyonu & Knowledge Graph & Swarm Yönetimi**
 
-Bu iş akışı, hedefin sınırlarının geniş olduğu (Bug Bounty, Internal Pentest vb.) ve tek bir Claude oturumunun tüm bilgileri tutmakta zorlanacağı durumlarda **Takım Lideri (Supervisor)** rolü üstlendiğinde uygulanmalıdır.
+Bu iş akışı, hedefin sınırlarının geniş olduğu (Bug Bounty, Internal Pentest vb.) ve tek bir orkestratör oturumunun tüm bilgileri tutmakta zorlanacağı durumlarda **Takım Lideri (Supervisor)** rolü üstlendiğinde uygulanmalıdır.
 
 ## Temel Kurallar
 1. Tüm keşif çıktılarını `memory-server`'a yaz → Knowledge Graph otomatik güncellenir

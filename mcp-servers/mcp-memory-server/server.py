@@ -25,13 +25,14 @@ try:
 except ImportError:
     HAS_NETWORKX = False
 
-# Veritabanı dosya yolu
-DB_PATH = os.path.expanduser("~/.claude/agent_memory.db")
+# Veritabanı dosya yolu (geriye uyumluluk: HACKERAGENT_HOME env var > ~/.hackeragent)
+HACKERAGENT_HOME = os.environ.get("HACKERAGENT_HOME", os.path.expanduser("~/.hackeragent"))
+DB_PATH = os.path.join(HACKERAGENT_HOME, "agent_memory.db")
 
 # Server oluştur
 mcp = FastMCP(
     "memory-server",
-    description="HackerAgent Knowledge Graph Hafızası v2.0 — İlişkisel graph + attack path planning"
+    instructions="HackerAgent Knowledge Graph Hafızası v2.0 — İlişkisel graph + attack path planning"
 )
 
 # ============================================================

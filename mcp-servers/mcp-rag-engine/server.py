@@ -20,11 +20,11 @@ try:
 except ImportError:
     HAS_CHROMADB = False
 
-DB_DIR = os.path.expanduser("~/.claude/rag_db")
+DB_DIR = os.path.join(os.environ.get("HACKERAGENT_HOME", os.path.expanduser("~/.hackeragent")), "rag_db")
 
 mcp = FastMCP(
     "rag-engine",
-    description="HackerAgent RAG — CVE, Exploit ve Writeup bilgi tabanında semantic search"
+    instructions="HackerAgent RAG — CVE, Exploit ve Writeup bilgi tabanında semantic search"
 )
 
 # ============================================================

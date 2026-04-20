@@ -1,6 +1,6 @@
 # 🏴 CTF Challenge Çözüm İş Akışı
 
-Bu doküman Claude Code'un bir CTF challenge'ını çözerken takip edeceği iş akışını tanımlar.
+Bu doküman HackerAgent orkestratörünün bir CTF challenge'ını çözerken takip edeceği iş akışını tanımlar.
 
 ## Ana Akış
 

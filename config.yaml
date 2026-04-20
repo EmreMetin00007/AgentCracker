@@ -1,0 +1,73 @@
+# HackerAgent v3.0 — Merkezi Konfigürasyon
+# ============================================================
+# Bu dosya repo varsayılanıdır. Kullanıcıya özel ayarlar için
+#   ~/.hackeragent/config.yaml
+# dosyasını oluşturun; oradaki değerler burayı override eder.
+#
+# Environment variable öncelik sırası:
+#   OPENROUTER_API_KEY  (en yüksek)  >  ~/.hackeragent/config.yaml  >  bu dosya
+#
+# Hassas anahtarları burada TUTMAYIN — .env dosyası veya env var kullanın.
+# ============================================================
+
+hackeragent:
+  version: "3.0"
+  # Tüm veri dizini (DB, loglar, RAG, approvals). HACKERAGENT_HOME env var'ı
+  # ile override edilebilir.
+  data_dir: "~/.hackeragent"
+
+llm:
+  provider: openrouter
+  base_url: "https://openrouter.ai/api/v1"
+  # API key'i BURAYA yazmak yerine .env veya ~/.hackeragent/config.yaml kullanın
+  openrouter_api_key: ""
+  models:
+    orchestrator: "qwen/qwen3.6-plus"
+    analyzer: "qwen/qwen3.6-plus"
+    exploit_gen: "nousresearch/hermes-4-405b"
+    report: "qwen/qwen3.6-plus"
+  max_tokens: 4096
+  temperature: 0.3
+  timeout_seconds: 120
+  max_tool_iterations: 25
+  tool_timeout_seconds: 300
+
+# MCP server tanımları — her biri stdio transport üzerinden subprocess
+# olarak başlatılır. `enabled: false` ile tek tek devre dışı bırakabilirsiniz.
+mcp_servers:
+  kali-tools:
+    enabled: true
+    command: "python3"
+    args: ["mcp-servers/mcp-kali-tools/server.py"]
+  memory-server:
+    enabled: true
+    command: "python3"
+    args: ["mcp-servers/mcp-memory-server/server.py"]
+  ctf-platform:
+    enabled: true
+    command: "python3"
+    args: ["mcp-servers/mcp-ctf-platform/server.py"]
+    env:
+      CTFD_URL: ""
+      CTFD_TOKEN: ""
+      HTB_TOKEN: ""
+      THM_TOKEN: ""
+  telemetry:
+    enabled: true
+    command: "python3"
+    args: ["mcp-servers/mcp-telemetry/server.py"]
+  rag-engine:
+    enabled: true
+    command: "python3"
+    args: ["mcp-servers/mcp-rag-engine/server.py"]
+
+safety:
+  # Bu operasyon tipleri için MCP kali-tools request_approval'ı zorunlu kılınır.
+  require_approval: ["exploit", "lateral_movement", "flag_submit"]
+  rate_limit_rps: 10
+
+logging:
+  level: "INFO"
+  # Boş bırakırsanız sadece stderr'e yazılır. Varsayılan:
+  # file: "~/.hackeragent/logs/agent.log"
+  file: ""

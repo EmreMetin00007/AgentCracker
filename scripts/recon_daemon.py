@@ -2,7 +2,7 @@
 """
 HackerAgent Recon Daemon (Phase C)
 Bu script hedef üzerinde sürekli bir (delta) tarama yapar.
-Yalnızca Claude oturumu sırasında arkaplanda (veya MCP aracı üzerinden) çalıştırılmak üzere tasarlanmıştır.
+Orkestratör oturumu sırasında arkaplanda (veya MCP aracı üzerinden) çalıştırılmak üzere tasarlanmıştır.
 
 Kullanım:
     python recon_daemon.py --target example.com --interval 60
@@ -15,7 +15,8 @@ import subprocess
 import os
 import sys
 
-DB_PATH = os.path.expanduser("~/.claude/agent_memory.db")
+HACKERAGENT_HOME = os.environ.get("HACKERAGENT_HOME", os.path.expanduser("~/.hackeragent"))
+DB_PATH = os.path.join(HACKERAGENT_HOME, "agent_memory.db")
 
 def get_known_ports(target):
     try:

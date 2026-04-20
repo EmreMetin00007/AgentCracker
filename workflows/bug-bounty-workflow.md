@@ -1,6 +1,6 @@
 # 🎯 Bug Bounty İş Akışı
 
-Bu doküman Claude Code'un bir bug bounty hedefinde takip edeceği tam iş akışını tanımlar.
+Bu doküman HackerAgent orkestratörünün bir bug bounty hedefinde takip edeceği tam iş akışını tanımlar.
 
 ## Faz 1: Hedef Algılama ve Scope Belirleme
 ```

@@ -1,4 +1,5 @@
 .claude/
+.hackeragent/
 __pycache__/
 *.pyc
 *.db
@@ -7,6 +8,16 @@ __pycache__/
 .venv/
 venv/
 env/
+
+# Hassas env dosyaları
+.env
+.env.local
+
+# Python paket artefaktları
+*.egg-info/
+build/
+dist/
+*.egg
 
 # Test/validation scripts
 validate.py

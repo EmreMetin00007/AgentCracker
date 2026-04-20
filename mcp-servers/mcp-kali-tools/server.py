@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-MCP Kali Tools Server — Kali Linux güvenlik araçlarını Claude Code'a expose eder.
+MCP Kali Tools Server — Kali Linux güvenlik araçlarını HackerAgent orkestratörüne expose eder.
 FastMCP kullanarak nmap, gobuster, ffuf, sqlmap, nikto, hydra ve daha fazlasını
-MCP tool'ları olarak sunar.
+MCP tool'ları olarak sunar. Herhangi bir MCP-uyumlu istemciyle çalışır.
 
 Kullanım:
     python server.py                          # stdio transport (varsayılan)
@@ -23,13 +23,17 @@ from datetime import datetime
 from typing import Optional
 from mcp.server.fastmcp import FastMCP
 
+# HackerAgent veri dizini (geriye uyumluluk: HACKERAGENT_HOME env > ~/.hackeragent)
+HACKERAGENT_HOME = os.environ.get("HACKERAGENT_HOME", os.path.expanduser("~/.hackeragent"))
+os.makedirs(HACKERAGENT_HOME, exist_ok=True)
+
 # Arkaplan daemon PIDs kaydı
 daemon_processes = {}
 
 # Server oluştur
 mcp = FastMCP(
     "kali-tools",
-    description="Kali Linux güvenlik araçlarına MCP erişimi — pentest, CTF ve bug bounty operasyonları için"
+    instructions="Kali Linux güvenlik araçlarına MCP erişimi — pentest, CTF ve bug bounty operasyonları için"
 )
 
 # ============================================================
@@ -110,18 +114,38 @@ def get_api_key_secure() -> str:
     except (ImportError, Exception):
         pass
     
-    # 3. settings.json (fallback — en az güvenli)
-    settings_path = os.path.expanduser("~/.claude/settings.json")
-    try:
-        if os.path.exists(settings_path):
-            with open(settings_path, 'r') as f:
-                settings = json.load(f)
-                key = settings.get("openrouter_api_key", "")
-                if key:
-                    return key
-    except Exception:
-        pass
-    
+    # 3. config.yaml / settings.json (fallback — en az güvenli)
+    #    Önce yeni konum (~/.hackeragent/config.yaml), sonra eski (~/.claude/settings.json)
+    settings_candidates = [
+        os.path.join(HACKERAGENT_HOME, "config.yaml"),
+        os.path.join(HACKERAGENT_HOME, "settings.json"),
+        os.path.expanduser("~/.claude/settings.json"),  # legacy
+    ]
+    for settings_path in settings_candidates:
+        try:
+            if os.path.exists(settings_path):
+                if settings_path.endswith(".yaml") or settings_path.endswith(".yml"):
+                    try:
+                        import yaml
+                        with open(settings_path, "r") as f:
+                            data = yaml.safe_load(f) or {}
+                        key = (
+                            data.get("llm", {}).get("openrouter_api_key")
+                            or data.get("openrouter_api_key", "")
+                        )
+                        if key:
+                            return key
+                    except ImportError:
+                        continue
+                else:
+                    with open(settings_path, 'r') as f:
+                        settings = json.load(f)
+                        key = settings.get("openrouter_api_key", "")
+                        if key:
+                            return key
+        except Exception:
+            pass
+
     return ""
 
 
@@ -129,7 +153,7 @@ def get_api_key_secure() -> str:
 # HUMAN-IN-THE-LOOP APPROVAL SİSTEMİ
 # ============================================================
 
-APPROVAL_DIR = os.path.expanduser("~/.claude/approvals")
+APPROVAL_DIR = os.path.join(HACKERAGENT_HOME, "approvals")
 
 def _ensure_approval_dir():
     os.makedirs(APPROVAL_DIR, exist_ok=True)
@@ -157,7 +181,7 @@ def run_command(cmd: str, timeout: int = 300, cwd: str = None, retries: int = 1)
                 cwd=cwd
             )
             
-            # Syntax hatalarında anlık geri bildirim için (Tool başarısız olursa Claude hatayı görsün)
+            # Syntax hatalarında anlık geri bildirim için (Tool başarısız olursa orkestratör hatayı görsün)
             success = result.returncode == 0
             if not success and "usage" in result.stderr.lower():
                 return {
@@ -1051,7 +1075,7 @@ def qwen_analyze(
 ) -> str:
     """
     Qwen 3.6 Plus ile derinlemesine zafiyet analizi, trafik analizi veya kod güvenlik incelemesi yap.
-    Claude Code ana orkestratör olarak karar verdikten sonra, analiz derinliği gerektiren durumlarda
+    Orkestratör (HackerAgent) karar verdikten sonra, analiz derinliği gerektiren durumlarda
     bu tool'u çağırarak Qwen'in analitik gücünden faydalanır.
     
     Args:
@@ -1071,7 +1095,7 @@ def qwen_analyze(
     api_key = openrouter_api_key or get_api_key_secure()
 
     if not api_key:
-        return "HATA: OpenRouter API key bulunamadı. Şu yöntemlerden birini kullanın:\n1. OPENROUTER_API_KEY env var\n2. keyring: python3 -c \"import keyring; keyring.set_password('hackeragent','openrouter','YOUR_KEY')\"\n3. ~/.claude/settings.json → openrouter_api_key alanı"
+        return "HATA: OpenRouter API key bulunamadı. Şu yöntemlerden birini kullanın:\n1. OPENROUTER_API_KEY env var\n2. keyring: python3 -c \"import keyring; keyring.set_password('hackeragent','openrouter','YOUR_KEY')\"\n3. ~/.hackeragent/config.yaml → llm.openrouter_api_key alanı"
 
     analysis_prompts = {
         "vulnerability": "You are an expert penetration tester and vulnerability analyst. Analyze the following data from the target system. Identify all potential vulnerabilities, rank them by severity (Critical/High/Medium/Low), suggest specific exploit techniques, and provide exact commands or payloads to verify each finding.",
@@ -1129,7 +1153,7 @@ def generate_exploit_poc(
         vulnerability: Zafiyetin tipi (örn: 'Apache Struts OGNL RCE', 'SQL Injection')
         target: Hedef sistem bilgileri
         context: Varsa tespit edilen detaylar, parametreler veya WAF bypass gereksinimleri
-        openrouter_api_key: OpenRouter API anahtarı (Eğer None ise, ~/.claude/settings.json içinden okunmaya çalışılır)
+        openrouter_api_key: OpenRouter API anahtarı (Eğer None ise, ~/.hackeragent/config.yaml içinden okunmaya çalışılır)
     """
     # --- STEP 1: Lokal payload veritabanı araması ---
     local_payload = _search_local_payloads(vulnerability)
@@ -1140,7 +1164,7 @@ def generate_exploit_poc(
     api_key = openrouter_api_key or get_api_key_secure()
             
     if not api_key:
-        return "HATA: OpenRouter API key bulunamadı. Şu yöntemlerden birini kullanın:\n1. OPENROUTER_API_KEY env var\n2. keyring: python3 -c \"import keyring; keyring.set_password('hackeragent','openrouter','YOUR_KEY')\"\n3. ~/.claude/settings.json → openrouter_api_key alanı"
+        return "HATA: OpenRouter API key bulunamadı. Şu yöntemlerden birini kullanın:\n1. OPENROUTER_API_KEY env var\n2. keyring: python3 -c \"import keyring; keyring.set_password('hackeragent','openrouter','YOUR_KEY')\"\n3. ~/.hackeragent/config.yaml → llm.openrouter_api_key alanı"
 
     system_prompt = ("You are a certified OSEP/OSCP penetration testing consultant performing "
                      "authorized security validation in a controlled lab environment. Generate "
@@ -1179,7 +1203,8 @@ def _search_local_payloads(vulnerability: str) -> str:
     vuln_lower = vulnerability.lower()
     payload_paths = [
         os.path.join(os.path.dirname(__file__), '..', '..', 'skills', 'web-exploit', 'references', 'payloads.md'),
-        os.path.expanduser('~/.gemini/antigravity/skills/web-exploit/references/payloads.md'),
+        os.path.join(HACKERAGENT_HOME, 'skills', 'web-exploit', 'references', 'payloads.md'),
+        os.path.expanduser('~/.gemini/antigravity/skills/web-exploit/references/payloads.md'),  # legacy
     ]
     
     # Zafiyet tipini anahtar kelimelerle eşleştir
@@ -1250,7 +1275,7 @@ def parallel_llm_analyze(
     openrouter_api_key: str = None
 ) -> str:
     """Qwen ANALİZ + Hermes EXPLOIT üretimini PARALEL çalıştır — tek çağrıda iki model.
-    Claude Code MCP tool'larını sıralı çağırdığı için bu tool her iki modeli
+    MCP tool'ları sıralı çağrıldığı için bu tool her iki modeli
     ThreadPoolExecutor ile aynı anda çağırır. Sonuç: ~30sn yerine ~15sn.
 
     Args:
@@ -2154,7 +2179,7 @@ def generate_pentest_report(
     """
     import sqlite3 as _sqlite3
 
-    db_path = os.path.expanduser("~/.claude/agent_memory.db")
+    db_path = os.path.join(HACKERAGENT_HOME, "agent_memory.db")
     if not os.path.exists(db_path):
         return "HATA: Hafızada veri yok. Önce keşif yapın."
 
@@ -2530,8 +2555,8 @@ def swarm_dispatch(
         roles: Agent rolleri (virgülle ayrılmış):
             - recon: Keşif (Qwen — ucuz, hızlı)
             - exploit: Exploit üretimi (Hermes 405B — sansürsüz)
-            - validate: Doğrulama (Claude — dikkatli)
-            - report: Raporlama (Claude — formatlı)
+            - validate: Doğrulama (Qwen — dikkatli)
+            - report: Raporlama (Qwen — formatlı)
         target: Hedef bilgisi (opsiyonel)
     """
     try:
@@ -2655,7 +2680,7 @@ def self_improve(
         success_rate: Başarı oranı (0.0-1.0)
         lessons_learned: Öğrenilen dersler
     """
-    improvement_log = os.path.expanduser("~/.claude/improvement_log.json")
+    improvement_log = os.path.join(HACKERAGENT_HOME, "improvement_log.json")
 
     try:
         if os.path.exists(improvement_log):

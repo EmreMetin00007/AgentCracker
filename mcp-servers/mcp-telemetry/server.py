@@ -13,11 +13,11 @@ import json
 from datetime import datetime, timedelta
 from mcp.server.fastmcp import FastMCP
 
-DB_PATH = os.path.expanduser("~/.claude/agent_telemetry.db")
+DB_PATH = os.path.join(os.environ.get("HACKERAGENT_HOME", os.path.expanduser("~/.hackeragent")), "agent_telemetry.db")
 
 mcp = FastMCP(
     "telemetry",
-    description="HackerAgent Observability — Tool metrikleri, LLM maliyet takibi, session analytics"
+    instructions="HackerAgent Observability — Tool metrikleri, LLM maliyet takibi, session analytics"
 )
 
 # ============================================================

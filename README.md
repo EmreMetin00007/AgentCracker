@@ -1,40 +1,69 @@
-# 🔴 HackerAgent
+# 🔴 HackerAgent v3.0
 
-**Claude Code × Kali Linux = Otonom Bug Bounty Avcısı & CTF Çözücü**
+**Otonom Bug Bounty Avcısı & CTF Çözücü — Claude Code CLI'dan Bağımsız**
 
-Claude Code'u Kali Linux üzerinde profesyonel, tam otonom bir güvenlik araştırmacısına dönüştüren sistem. Kill Chain metodolojisi, OODA Loop karar döngüsü ve 200+ zafiyet tipi ile donatılmış.
+HackerAgent, OpenRouter (Qwen 3.6 Plus + Hermes 405B) üzerinde çalışan kendi
+orkestratörüne sahip bağımsız bir güvenlik platformudur. MCP (Model Context
+Protocol) mimarisini koruyarak Kali Linux güvenlik araçlarına, knowledge
+graph hafızasına, RAG bilgi tabanına ve telemetriye tek bir CLI üzerinden
+erişir. Kill Chain metodolojisi, OODA Loop karar döngüsü ve 200+ zafiyet tipi
+ile donatılmıştır.
+
+> **v2.0 → v3.0 değişikliği:** Claude Code CLI bağımlılığı tamamen kaldırıldı.
+> Artık Node.js, `npm install -g @anthropic-ai/claude-code` veya
+> `~/.claude/settings.json` yok. `hackeragent` komutu kendi Python orkestratörünü
+> çalıştırır; MCP server'lar aynen korunmuştur.
 
 ## ⚡ Tek Komutla Kurulum
 
 ```bash
 # 1. Kali Linux'ta repoyu klonla
 git clone https://github.com/KULLANICI/HackerAgent.git
-
-# 2. Dizine gir
 cd HackerAgent
 
-# 3. Kurulum scriptini çalıştır (her şeyi yapar)
+# 2. Kurulum scriptini çalıştır
 chmod +x install.sh
 sudo ./install.sh
+# (Kurulum sırasında OpenRouter API key'iniz sorulacak)
 
-# 4. Claude Code'u başlat
-claude
+# 3. Orkestratörü başlat
+hackeragent
 ```
 
-**Bu kadar.** `install.sh` aşağıdakileri otomatik yapar:
-- ✅ Tüm Kali güvenlik araçlarını kurar (nmap, sqlmap, ffuf, nuclei, hashcat, john, gdb, binwalk...)
-- ✅ Python bağımlılıklarını kurar (pwntools, mcp, z3, cryptodome...)
+`install.sh` şunları yapar:
+- ✅ Kali güvenlik araçlarını kurar (nmap, sqlmap, ffuf, nuclei, hashcat, john, gdb, binwalk, ...)
+- ✅ Python bağımlılıklarını ve `hackeragent` paketini kurar (`pip install -e .`)
 - ✅ Wordlist'leri hazırlar (rockyou.txt, seclists)
-- ✅ Skills'leri Claude Code'a yükler (6 güvenlik skill'i)
-- ✅ 3 MCP server'ı yapılandırır (kali-tools, ctf-platform, memory-server)
-- ✅ Global CLAUDE.md persona dosyasını kurar
+- ✅ `~/.hackeragent/` veri dizinini oluşturur (DB, RAG, loglar, approvals)
+- ✅ OpenRouter API key'i `.env` dosyasına kaydeder
 - ✅ GDB eklentilerini (GEF) ve Ruby gem'lerini kurar
 
 ---
 
-## 🏗️ Ne İçeriyor?
+## 🏗️ Mimari
 
-### 🧠 Hacker Persona (CLAUDE.md)
+```
+┌─────────────────────────────────────────────┐
+│   hackeragent CLI (Rich tabanlı REPL)       │
+│   Kullanıcı: "example.com'u tara"           │
+└───────────────────┬─────────────────────────┘
+                    │
+        ┌───────────▼────────────┐
+        │   Orchestrator (OODA)  │  ← system_prompt.md + rules/ + skills/
+        └───┬────────────────┬───┘
+            │                │
+ ┌──────────▼──┐      ┌──────▼──────────┐
+ │ LLMClient   │      │ MCPManager      │
+ │ OpenRouter  │      │ (stdio sürücü)  │
+ │ Qwen/Hermes │      └──────┬──────────┘
+ └─────────────┘             │
+                   ┌─────────┼─────────┬────────────┬──────────┐
+                   │         │         │            │          │
+              kali-tools  memory  ctf-platform  telemetry  rag-engine
+              (MCP)       server   (MCP)        (MCP)      (MCP)
+```
+
+### 🧠 Hacker Persona (`system_prompt.md`)
 - **Kill Chain** metodolojisi (Recon → Exploit → Post-Exploit → Report)
 - **OODA Loop** karar döngüsü
 - Tüm güvenlik disiplinleri için detaylı prosedürler
@@ -50,47 +79,55 @@ claude
 | `ctf-solver` | Ana orkestratör — kategori tanımlama, iteratif çözüm |
 | `report-generator` | HackerOne rapor formatı, CVSS hesaplama, düzeltme önerileri |
 
-### ⚙️ 3 MCP Server
+### ⚙️ 5 MCP Server
 
 | Server | Araçlar |
 |--------|---------|
-| `kali-tools` | 25+ araç: nmap, ffuf, sqlmap, nikto, nuclei, hydra, hashcat, john, volatility, qwen_analyze, generate_exploit_poc... |
+| `kali-tools` | 40+ araç: nmap, ffuf, sqlmap, nikto, nuclei, hydra, hashcat, john, volatility, qwen_analyze, generate_exploit_poc, ... |
 | `ctf-platform` | CTFd, HackTheBox, TryHackMe API + decode/hash yardımcıları |
-| `memory-server` | SQLite kalıcı hafıza: findings, credentials, endpoints |
+| `memory-server` | NetworkX Knowledge Graph + SQLite (attack path planning) |
+| `telemetry` | Tool/LLM call tracking, maliyet dashboard'u |
+| `rag-engine` | ChromaDB ile CVE/exploit/writeup semantic search |
 
 ### 🧬 Hibrit LLM Mimarisi
 
-| Model | Rol | Tetiklenme |
-|-------|-----|------------|
-| Claude Code | Ana orkestratör (Supervisor) | Her zaman aktif |
-| Qwen 3.6 Plus | Derin analiz motoru | Zafiyet analizi, trafik/kod/log inceleme |
-| Hermes 405B | PoC exploit üreteci | WAF bypass, exploit PoC üretimi |
-
-### 📋 İş Akışları
-- **Bug Bounty Workflow** — 6 fazlı profesyonel süreç
-- **CTF Workflow** — Kategori bazlı çözüm prosedürleri
+| Model | Rol | Nasıl Tetiklenir |
+|-------|-----|------------------|
+| **Qwen 3.6 Plus** | Orkestratör + analiz | Her zaman aktif (default) |
+| **Hermes 4 405B** | PoC exploit üretici | `generate_exploit_poc`, `parallel_llm_analyze` |
 
 ---
 
 ## 🎯 Kullanım Örnekleri
 
 ```bash
-# Claude Code'u başlat
-claude
+# İnteraktif REPL
+hackeragent
 
-# Hedef tarama
-> "10.10.10.10 hedefini tara ve zafiyetleri bul"
+# REPL içinde:
+> 10.10.10.10 hedefini tara ve zafiyetleri bul
+> example.com üzerinde kapsamlı güvenlik testi yap
+> Bu binary dosyasını analiz et ve exploit yaz
+> Bulduğum SQL injection için HackerOne raporu yaz
 
-# Bug bounty
-> "example.com üzerinde kapsamlı güvenlik testi yap"
+# REPL komutları:
+/tools      # Aktif MCP araçlarını listele
+/reset      # Sohbet geçmişini sıfırla
+/exit       # Çık
+```
 
-# CTF challenge çözme
-> "Bu binary dosyasını analiz et ve exploit yaz"
-> "Bu PCAP dosyasını analiz et, flag'i bul"
-> "Bu şifreli metni kır"
+```bash
+# Tek görev (REPL açmadan)
+hackeragent --task "10.10.10.10 portlarını tara"
 
-# Rapor oluşturma
-> "Bulduğum SQL injection için HackerOne raporu yaz"
+# Sadece araçları listele
+hackeragent --list-tools
+
+# Özel config
+hackeragent --config my-config.yaml
+
+# Debug logları
+hackeragent --log-level DEBUG
 ```
 
 ---
@@ -99,63 +136,94 @@ claude
 
 ```
 HackerAgent/
-├── install.sh                 # 🚀 Tek komut kurulum
-├── CLAUDE.md                  # 🧠 Hacker persona & metodoloji
-├── .gitignore
-├── .claude/
-│   └── rules/
-│       ├── scope-guard.md     # Hedef koruma kuralları
-│       └── safety-rules.md    # Operasyonel güvenlik
-├── skills/                    # ⚡ 6 güvenlik skill'i
+├── hackeragent/                  # 🧠 Ana Python paketi (orkestratör)
+│   ├── __main__.py               # python -m hackeragent
+│   ├── core/
+│   │   ├── orchestrator.py       # OODA Loop motoru
+│   │   ├── llm_client.py         # OpenRouter client (tool use)
+│   │   ├── mcp_manager.py        # MCP server lifecycle (stdio)
+│   │   ├── tool_router.py        # tool_calls → MCP çağrıları
+│   │   ├── prompt_engine.py      # system_prompt + rules + skills
+│   │   └── config.py             # YAML + .env yükleyici
+│   ├── cli/
+│   │   ├── main.py               # argparse + REPL
+│   │   └── banner.py
+│   └── utils/logger.py
+│
+├── config.yaml                   # 🎛️ Merkezi konfigürasyon
+├── .env.example                  # Örnek environment variables
+├── system_prompt.md              # 🧠 Hacker persona & metodoloji
+├── pyproject.toml                # Python paketi
+├── requirements.txt
+│
+├── rules/                        # 📜 Operasyonel kurallar
+│   ├── scope-guard.md
+│   └── safety-rules.md
+│
+├── skills/                       # ⚡ 6 güvenlik skill'i
 │   ├── recon-enumeration/
-│   │   ├── SKILL.md
-│   │   └── references/
 │   ├── web-exploit/
-│   │   ├── SKILL.md
-│   │   └── references/payloads.md
 │   ├── binary-pwn/
-│   │   ├── SKILL.md
-│   │   └── scripts/exploit_template.py
 │   ├── crypto-forensics/
-│   │   └── SKILL.md
 │   ├── ctf-solver/
-│   │   ├── SKILL.md
-│   │   └── references/ctf-methodology.md
 │   └── report-generator/
-│       ├── SKILL.md
-│       └── templates/report-templates.md
-├── mcp-servers/               # ⚙️ MCP server'lar
+│
+├── mcp-servers/                  # ⚙️ 5 MCP server
 │   ├── mcp-kali-tools/
-│   │   ├── server.py
-│   │   └── requirements.txt
 │   ├── mcp-ctf-platform/
-│   │   ├── server.py
-│   │   └── requirements.txt
-│   └── mcp-memory-server/
-│       ├── server.py
-│       └── requirements.txt
-├── scripts/                   # 🔄 Daemon'lar
-│   └── recon_daemon.py
-└── workflows/                 # 📋 İş akışları
-    ├── bug-bounty-workflow.md
-    ├── ctf-workflow.md
-    └── supervisor-workflow.md
+│   ├── mcp-memory-server/
+│   ├── mcp-telemetry/
+│   └── mcp-rag-engine/
+│
+├── scripts/                      # 🔄 Yardımcı scriptler
+│   ├── attack_planner.py
+│   ├── recon_daemon.py
+│   └── swarm_orchestrator.py
+│
+├── workflows/                    # 📋 İş akışları
+│   ├── bug-bounty-workflow.md
+│   ├── ctf-workflow.md
+│   └── supervisor-workflow.md
+│
+└── install.sh                    # 🚀 Tek komut kurulum
 ```
 
 ---
 
-## 🔧 CTF Platform API (Opsiyonel)
+## 🔧 Konfigürasyon
 
-CTF platformlarına API erişimi için `~/.claude/settings.json` dosyasındaki token'ları doldurun:
-
+### `.env` (hassas)
 ```bash
-# Dosyayı düzenle
-nano ~/.claude/settings.json
-
-# CTFd:  CTFD_URL ve CTFD_TOKEN değerlerini girin
-# HTB:   HTB_TOKEN değerini girin  
-# THM:   THM_TOKEN değerini girin
+OPENROUTER_API_KEY=sk-or-v1-...
+CTFD_URL=https://ctfd.example.com
+CTFD_TOKEN=...
+HTB_TOKEN=...
 ```
+
+### `config.yaml` veya `~/.hackeragent/config.yaml` (ayarlar)
+```yaml
+llm:
+  models:
+    orchestrator: "qwen/qwen3.6-plus"
+    exploit_gen: "nousresearch/hermes-4-405b"
+  temperature: 0.3
+  max_tool_iterations: 25
+
+mcp_servers:
+  rag-engine:
+    enabled: false   # tekil server'ı kapatmak için
+```
+
+**Öncelik sırası:** `OPENROUTER_API_KEY` env var → `~/.hackeragent/config.yaml` → repo içindeki `config.yaml` → built-in varsayılanlar.
+
+---
+
+## 🔀 v2.0'dan Geçiş
+
+- **Silindi:** `setup_openrouter.sh`, `~/.claude/settings.json`, Claude Code CLI, Node.js, `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS`, `ANTHROPIC_BASE_URL` hile'si.
+- **Değişti:** `~/.claude/` → `~/.hackeragent/` (veri dizini). Eski path hala okunur (geriye uyumluluk) ama yeni yazımlar yeni konuma gider.
+- **Değişti:** `CLAUDE.md` → `system_prompt.md`. `.claude/rules/` → `rules/`.
+- **Eklendi:** `hackeragent` CLI, `config.yaml`, `pyproject.toml`, `.env.example`.
 
 ---
 
@@ -176,12 +244,13 @@ Bu sistem **yalnızca yasal ve etik** güvenlik testi amaçlarıyla kullanılmal
 
 - **200+ zafiyet tipi** (Web, Binary, Crypto, Forensics)
 - **150+ hazır payload** (SQLi, XSS, SSRF, LFI, CMDi, SSTI)
-- **25+ araç** MCP üzerinden
-- **3 LLM modeli** (Claude + Qwen 3.6 Plus + Hermes 405B)
+- **40+ araç** MCP üzerinden
+- **2 LLM modeli** (Qwen 3.6 Plus + Hermes 4 405B)
 - **7 CTF kategorisi** için prosedürler
 - **CVSS hesaplama** ve rapor şablonları
 - **Kill Chain + OODA Loop** metodolojisi
-- **Kalıcı hafıza** (SQLite memory-server)
+- **Kalıcı hafıza** (SQLite + NetworkX knowledge graph)
+- **RAG bilgi tabanı** (ChromaDB)
 
 ---
 

@@ -83,7 +83,10 @@ class AttackPathPlanner:
     }
 
     def __init__(self, db_path: str = None):
-        self.db_path = db_path or os.path.expanduser("~/.claude/agent_memory.db")
+        self.db_path = db_path or os.path.join(
+            os.environ.get("HACKERAGENT_HOME", os.path.expanduser("~/.hackeragent")),
+            "agent_memory.db",
+        )
         self.G = nx.DiGraph()
         self._load_graph()
 

@@ -1,0 +1,47 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hackeragent"
+version = "3.0.0"
+description = "Otonom pentest / CTF / bug-bounty orkestratörü (Claude Code CLI bağımsız)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "HackerAgent Contributors" }]
+keywords = ["security", "pentest", "ctf", "bug-bounty", "mcp", "llm"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Operating System :: POSIX :: Linux",
+    "Topic :: Security",
+]
+
+dependencies = [
+    "requests>=2.31",
+    "PyYAML>=6.0",
+    "rich>=13.7",
+    "mcp>=1.0",
+]
+
+[project.optional-dependencies]
+full = [
+    "networkx>=3.0",
+    "chromadb>=0.4",
+    "keyring>=24.0",
+    "pwntools>=4.11",
+    "pycryptodome>=3.19",
+    "beautifulsoup4>=4.12",
+    "playwright>=1.40",
+]
+
+[project.scripts]
+hackeragent = "hackeragent.cli.main:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["hackeragent*"]
+exclude = ["mcp-servers*", "scripts*", "skills*", "workflows*", "rules*", "tests*"]

@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
 Swarm Orchestrator — Multi-Agent Swarm Yönetimi.
-Her agent kendi context window'una sahip, Claude'un context'i kirlenmez.
+Her agent kendi context window'una sahip; orkestratörün context'i kirlenmez.
 
 Roller:
   - Recon Agent (Qwen tabanlı, ucuz)
   - Exploit Agent (Hermes tabanlı, PoC üretici)
-  - Validate Agent (Claude, dikkatli)
-  - Report Agent (Claude, formatting)
+  - Validate Agent (Qwen, dikkatli)
+  - Report Agent (Qwen, formatting)
 
 Kullanım:
     MCP tool olarak: swarm_dispatch, swarm_status
@@ -37,12 +37,12 @@ class AgentRole(str, Enum):
     REPORT = "report"
 
 
-# Model mapping
+# Model mapping — tüm roller için OpenRouter üzerinden Qwen/Hermes (Claude bağımsız)
 ROLE_MODELS = {
     AgentRole.RECON: "qwen/qwen3.6-plus",
     AgentRole.EXPLOIT: "nousresearch/hermes-4-405b",
-    AgentRole.VALIDATE: "anthropic/claude-sonnet-4",
-    AgentRole.REPORT: "anthropic/claude-sonnet-4",
+    AgentRole.VALIDATE: "qwen/qwen3.6-plus",
+    AgentRole.REPORT: "qwen/qwen3.6-plus",
 }
 
 # Role-specific system prompts
@@ -103,16 +103,42 @@ class SwarmOrchestrator:
         self.task_counter = 0
 
     def _get_api_key(self) -> str:
-        """API key'i al."""
+        """API key'i al (env > config.yaml > legacy settings.json)."""
         key = os.environ.get("OPENROUTER_API_KEY", "")
         if key:
             return key
-        settings_path = os.path.expanduser("~/.claude/settings.json")
-        try:
-            with open(settings_path, 'r') as f:
-                return json.load(f).get("openrouter_api_key", "")
-        except Exception:
-            return ""
+
+        home = os.environ.get("HACKERAGENT_HOME", os.path.expanduser("~/.hackeragent"))
+        candidates = [
+            os.path.join(home, "config.yaml"),
+            os.path.join(home, "settings.json"),
+            os.path.expanduser("~/.claude/settings.json"),  # legacy
+        ]
+        for path in candidates:
+            try:
+                if not os.path.exists(path):
+                    continue
+                if path.endswith((".yaml", ".yml")):
+                    try:
+                        import yaml
+                        with open(path, "r") as f:
+                            data = yaml.safe_load(f) or {}
+                        k = (
+                            data.get("llm", {}).get("openrouter_api_key")
+                            or data.get("openrouter_api_key", "")
+                        )
+                        if k:
+                            return k
+                    except ImportError:
+                        continue
+                else:
+                    with open(path, "r") as f:
+                        k = json.load(f).get("openrouter_api_key", "")
+                        if k:
+                            return k
+            except Exception:
+                continue
+        return ""
 
     def create_task(self, role: AgentRole, prompt: str, context: dict = None) -> str:
         """Yeni agent görevi oluştur."""

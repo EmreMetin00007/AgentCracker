@@ -20,7 +20,7 @@ from mcp.server.fastmcp import FastMCP
 
 mcp = FastMCP(
     "ctf-platform",
-    description="CTF platform API entegrasyonu — challenge yönetimi ve flag submission"
+    instructions="CTF platform API entegrasyonu — challenge yönetimi ve flag submission"
 )
 
 # ============================================================
