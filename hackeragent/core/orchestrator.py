@@ -17,7 +17,7 @@ import json
 from dataclasses import dataclass, field
 from typing import Callable
 
-from hackeragent.core.budget import BudgetExceeded, BudgetTracker
+from hackeragent.core.budget import BudgetTracker
 from hackeragent.core.config import Config, get_config
 from hackeragent.core.llm_client import LLMClient, LLMReply
 from hackeragent.core.mcp_manager import MCPManager, tools_to_openai_schema
@@ -122,7 +122,14 @@ class Orchestrator:
         return self.session.messages
 
     def ask(self, user_input: str) -> str:
-        """Kullanıcı mesajını işle, tool döngüsünü tamamla, nihai yanıtı döndür."""
+        """Kullanıcı mesajını işle, tool döngüsünü tamamla, nihai yanıtı döndür.
+
+        Graceful budget handling:
+          • Her LLM yanıtı önce session'a kaydedilir (para ödediğimiz çıktı kaybolmaz)
+          • %90'da LLM'e "görevi bitir" ipucu enjekte edilir (tek sefer)
+          • %100'e ulaşıldığında mevcut tur TAMAMLANIR (bekleyen tool_call'lar dahil),
+            sonraki tur başlamaz → session tutarlı kalır, `--resume last` sorunsuz çalışır
+        """
         if not self._started:
             self.start()
 
@@ -131,11 +138,29 @@ class Orchestrator:
             self.session.target = _extract_target(user_input)
 
         max_iter = self.config.max_tool_iterations
+        budget_stopped = False
 
-        try:
-            for iteration in range(max_iter):
-                self._emit("llm_call", {"iter": iteration + 1})
+        for iteration in range(max_iter):
+            # Bütçe tamamen bittiyse ve önceki iterasyonda tool'lar da yürüdüyse,
+            # burada tur başlatma.
+            if self.budget.should_stop:
+                budget_stopped = True
+                break
 
+            # Wrap-up ipucu: LLM'e "bütçe bitiyor" haberini ver (1 kez)
+            if self.budget.wrap_up_hint_needed:
+                self.session.messages.append({
+                    "role": "system",
+                    "content": (
+                        "⚠️ BÜTÇE UYARISI: Session maliyet limitinin %90'ına "
+                        "ulaştın. Bu turda görevi bitir: özet, raporla, bekleyen "
+                        "kritik olmayan tool çağrılarını erteleme. Uzun çıktı üretme."
+                    ),
+                })
+                self.budget.mark_wrap_up_sent()
+
+            self._emit("llm_call", {"iter": iteration + 1})
+            try:
                 if self.streaming_enabled:
                     reply = self._stream_once()
                 else:
@@ -143,50 +168,73 @@ class Orchestrator:
                         messages=self.session.messages,
                         tools=self.tools_schema or None,
                     )
+            except Exception as e:
+                # LLM hatası: session'ı temizle (son kullanıcı mesajı düşsün mü?)
+                # → Düşürmeyelim, kullanıcı --resume ile tekrar deneyebilsin.
+                return f"HATA: LLM çağrısı başarısız: {e}"
 
-                # Bütçe kaydı
-                if reply.cost_usd > 0:
-                    self.budget.register(self.config.model_orchestrator, reply.cost_usd)
+            # 1) ÖNCE session'a yaz — ödediğimiz yanıt kayıtlı olsun
+            assistant_msg: dict = {"role": "assistant", "content": reply.content or ""}
+            if reply.has_tool_calls():
+                assistant_msg["tool_calls"] = [
+                    {
+                        "id": tc["id"] or f"call_{i}",
+                        "type": "function",
+                        "function": {
+                            "name": tc["name"],
+                            "arguments": json.dumps(tc["arguments"], ensure_ascii=False),
+                        },
+                    }
+                    for i, tc in enumerate(reply.tool_calls)
+                ]
+            self.session.messages.append(assistant_msg)
 
-                # LLM mesajını geçmişe ekle (tool_calls dahil)
-                assistant_msg: dict = {"role": "assistant", "content": reply.content or ""}
-                if reply.has_tool_calls():
-                    assistant_msg["tool_calls"] = [
-                        {
-                            "id": tc["id"] or f"call_{i}",
-                            "type": "function",
-                            "function": {
-                                "name": tc["name"],
-                                "arguments": json.dumps(tc["arguments"], ensure_ascii=False),
-                            },
-                        }
-                        for i, tc in enumerate(reply.tool_calls)
-                    ]
-                self.session.messages.append(assistant_msg)
-                self.session.save()
+            # 2) SONRA bütçeyi kaydet
+            if reply.cost_usd > 0:
+                self.budget.register(self.config.model_orchestrator, reply.cost_usd)
+            self.session.total_cost_usd = self.budget.total_cost_usd
+            self.session.save()
 
-                if not reply.has_tool_calls():
-                    return reply.content or "(LLM boş yanıt döndü)"
+            if not reply.has_tool_calls():
+                # Text-only yanıt — görev tamamlandı
+                if self.budget.should_stop:
+                    return (
+                        (reply.content or "(boş yanıt)")
+                        + "\n\n🛑 Bütçe limiti doldu — sonraki tur iptal edildi.\n"
+                        + self.budget.summary()
+                        + f"\n\n▶ Devam: hackeragent --resume {self.session.id} "
+                        + f"--budget {self.budget.max_cost_usd * 2:.2f}"
+                    )
+                return reply.content or "(LLM boş yanıt döndü)"
 
-                # Tool çağrılarını sıralı yürüt
-                for tc in reply.tool_calls:
-                    self._emit("tool_call", {"name": tc["name"], "args": tc["arguments"]})
-                    result = self.router.execute(tc)
-                    self.session.tool_calls_count += 1
-                    self._emit("tool_result", {"name": tc["name"], "chars": len(result)})
-                    self.session.messages.append({
-                        "role": "tool",
-                        "tool_call_id": tc["id"] or "call_0",
-                        "content": result[:12000],
-                    })
-                self.session.save()
+            # 3) Tool çağrılarını yürüt — bunlar MCP tarafında çalışır, LLM maliyeti yok.
+            # Bütçe bitmiş olsa BİLE bu turdaki tool'ları tamamlamak istiyoruz
+            # (yoksa yarım kalır, session tutarsız olur)
+            for tc in reply.tool_calls:
+                self._emit("tool_call", {"name": tc["name"], "args": tc["arguments"]})
+                result = self.router.execute(tc)
+                self.session.tool_calls_count += 1
+                self._emit("tool_result", {"name": tc["name"], "chars": len(result)})
+                self.session.messages.append({
+                    "role": "tool",
+                    "tool_call_id": tc["id"] or "call_0",
+                    "content": result[:12000],
+                })
+            self.session.save()
 
+        if budget_stopped:
             return (
-                f"⚠️ Maksimum tool iterasyonu ({max_iter}) aşıldı. "
-                f"Görev tam tamamlanamadı."
+                "🛑 BÜTÇE DURDU — mevcut tur tamamlandı, yeni tur başlatılmadı.\n\n"
+                + self.budget.summary()
+                + f"\n\n▶ Devam: hackeragent --resume {self.session.id} "
+                + f"--budget {self.budget.max_cost_usd * 2:.2f}\n"
+                "   (Son tool sonuçları session'a kaydedildi, resume'da LLM bunları analiz edecek.)"
             )
-        except BudgetExceeded as e:
-            return f"🛑 BÜTÇE DURDU: {e}\n\n{self.budget.summary()}"
+
+        return (
+            f"⚠️ Maksimum tool iterasyonu ({max_iter}) aşıldı. "
+            f"Görev tam tamamlanamadı. Devam için: --resume {self.session.id}"
+        )
 
     def _stream_once(self) -> LLMReply:
         """Streaming tek LLM turu — delta'ları stream_callback'e yollar."""
