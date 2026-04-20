@@ -184,6 +184,42 @@ class MCPManager:
             await conn.stop()
         self._connections.clear()
 
+    async def _restart_one(self, name: str) -> bool:
+        """Tek bir server'ı durdur ve yeniden başlat."""
+        cfg = self.servers_config.get(name)
+        if not cfg or not cfg.get("enabled", True):
+            return False
+        old = self._connections.pop(name, None)
+        if old:
+            try:
+                await old.stop()
+            except Exception:
+                pass
+        # Mevcut env passthrough ile yeniden başlat
+        import os as _os
+        PASSTHROUGH_ENV = {
+            "OPENROUTER_API_KEY", "HACKERAGENT_HOME", "HOME", "PATH", "LANG",
+            "LC_ALL", "USER", "PYTHONPATH", "PYTHONUNBUFFERED",
+            "CTFD_URL", "CTFD_TOKEN", "HTB_TOKEN", "THM_TOKEN",
+        }
+        base_env = {k: v for k, v in _os.environ.items() if k in PASSTHROUGH_ENV and v}
+        server_env = dict(base_env)
+        server_env.update(cfg.get("env") or {})
+        params = StdioServerParameters(
+            command=cfg.get("command", "python3"),
+            args=list(cfg.get("args", [])),
+            env=server_env,
+        )
+        conn = _Connection(name, params)
+        try:
+            await conn.start()
+            self._connections[name] = conn
+            log.warning("MCP server '%s' YENİDEN BAŞLATILDI", name)
+            return True
+        except Exception as e:
+            log.error("MCP server '%s' restart başarısız: %s", name, e)
+            return False
+
     async def _call(self, server: str, tool: str, arguments: dict) -> str:
         conn = self._connections.get(server)
         if conn is None:
@@ -211,6 +247,14 @@ class MCPManager:
 
     def call_tool(self, server: str, tool: str, arguments: dict, timeout: int = 300) -> str:
         return self._run(self._call(server, tool, arguments or {}), timeout=timeout)
+
+    def restart_server(self, name: str, timeout: int = 20) -> bool:
+        """Belirli bir MCP server'ı yeniden başlat. True = başarılı."""
+        try:
+            return self._run(self._restart_one(name), timeout=timeout)
+        except Exception as e:
+            log.error("restart_server('%s') hata: %s", name, e)
+            return False
 
 
 # ─── OpenAI-schema adapter ───────────────────────────────────────────────────

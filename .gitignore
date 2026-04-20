@@ -31,3 +31,12 @@ idor_test.py
 loot/
 screenshots/
 challenge_files/
+-e 
+# Environment and credential files
+.env
+.env.*
+*.env
+credentials.json
+*.pem
+*.key
+.credentials
