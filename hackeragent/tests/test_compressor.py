@@ -51,7 +51,10 @@ def test_disabled_never_compresses():
 
 def test_compress_replaces_middle_with_summary():
     llm = MagicMock()
-    llm.chat.return_value = LLMReply(content="### Özet\n- 3 port açık\n- nmap yapıldı")
+    llm.chat.return_value = LLMReply(
+        content="### Özet\n- 3 port açık\n- nmap yapıldı",
+        cost_usd=0.0015,
+    )
     c = Compressor(llm, threshold_chars=10_000, keep_tail=4)
     msgs = _make_msgs(n_tool=10, chars_each=2000)
     before_count = len(msgs)
@@ -62,6 +65,8 @@ def test_compress_replaces_middle_with_summary():
     assert result.removed_count > 0
     assert result.before_chars == before_chars
     assert result.after_chars < before_chars
+    # Yeni: LLM cost_usd CompressionResult'ta var
+    assert result.llm_cost_usd == 0.0015
     # Mesaj sayısı azaldı
     assert len(msgs) < before_count
     # İlk mesaj system prompt

@@ -56,6 +56,7 @@ class Plan:
     task: str
     steps: list[PlanStep]
     raw_reasoning: str = ""
+    llm_cost_usd: float = 0.0
 
     def is_empty(self) -> bool:
         return not self.steps
@@ -158,7 +159,8 @@ class Planner:
 
         plan = _parse_plan_reply(user_input, reply.content or "")
         if plan and plan.steps:
-            log.info("Plan oluşturuldu: %d adım", len(plan.steps))
+            plan.llm_cost_usd = float(reply.cost_usd or 0.0)
+            log.info("Plan oluşturuldu: %d adım (cost=$%.4f)", len(plan.steps), plan.llm_cost_usd)
             return plan
         log.debug("Plan parse edilemedi, atlanıyor")
         return None

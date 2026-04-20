@@ -222,6 +222,80 @@ mcp_servers:
 - ✅ Import smoke test + config validation
 - ⚠️ Canlı OpenRouter + Kali MCP E2E test edilmedi
 
+---
+
+## Faz-D: Cost-Aware Telemetry (2026-04-20)
+
+Compressor/Planner/Cache'in ucuz LLM overhead'i vs tasarrufunu ölçen
+ve session sonunda **"cost-aware pentest agent"** raporu üreten katman.
+
+### Yeni bileşenler
+1. **Telemetry server genişletmesi** (`mcp-servers/mcp-telemetry/server.py`)
+   - Yeni tablo: `savings_events(session_id, event_type, details, cost_usd, saved_tokens, saved_usd)`
+   - Yeni tool'lar: `log_savings_event()`, `get_savings_report(session_id)`
+   - `get_savings_report` agrega edip bütçe etki analizi yapıyor (overhead, tasarruf, net fayda)
+
+2. **`hackeragent/core/telemetry.py`** — in-memory `SessionStats` + `TelemetryEmitter`
+   - `SessionStats`: compression/cache_hit/planner/reflection/parallel event'lerini biriktirir
+   - Her event için tahmini $ tasarruf hesaplar (saved_tokens × fallback input price)
+   - `TelemetryEmitter`: MCP telemetry server'a **fire-and-forget daemon thread** ile event gönderir (LLM akışını bloklamaz, exception sessizce yutulur)
+   - `render_report()`: kullanıcıya renkli özet üretir
+
+3. **Compressor & Planner** cost döndürür
+   - `CompressionResult.llm_cost_usd` — sıkıştırma için harcanan cheap LLM maliyeti
+   - `Plan.llm_cost_usd` — plan üretimi için harcanan cheap LLM maliyeti
+   - Bu maliyetler `budget.register(cheap_model, cost)` ile toplam bütçeye eklenir
+
+4. **ToolCache callback**
+   - `on_hit(qname, result_chars)` callback alanı eklendi
+   - Orchestrator `self.tool_cache.on_hit = self.stats.record_cache_hit` ile bağlanıyor
+
+5. **Orchestrator entegrasyonu**
+   - `SessionStats` instantiate edilir, `start()` sonrası `TelemetryEmitter` attach edilir
+   - `ask()` içinde her olay (compression, plan, reflection, parallel) `stats.record_*` çağırır
+   - Yeni public metod: `cost_report()` — CLI'ın `/report` ve REPL çıkışında kullandığı metin
+   - `reset()` stats'ı da sıfırlıyor (emitter korunuyor)
+
+6. **CLI entegrasyonu**
+   - Yeni slash komutu: `/report` — anlık cost-aware rapor
+   - REPL çıkışında otomatik olarak `cost_report()` gösterilir
+   - `--task` single-run modunda da rapor gösterilir
+   - `/help` güncellendi
+
+### Örnek rapor çıktısı
+```
+╭─────────────────────────────────────────────────────╮
+│  💰  Cost-Aware Session Report                      │
+╰─────────────────────────────────────────────────────╯
+🧠 LLM: 18 çağrı, $0.1234
+📦 Compression: 2 sıkıştırma, ~19,750 token kurtardı (~%66 context tasarrufu), overhead $0.0035
+♻️  Cache: 7 hit, ~5,600 token context tasarrufu (~$0.0028)
+🗺️  Plan: 1 üretildi, ~7,000 token iterasyon tasarrufu, overhead $0.0008
+🪞 Reflection: 1 nudge, ~3,000 boşa iterasyon önlendi
+⚡ Parallel: 2 tur paralel tool yürüttü (wall-clock tasarrufu)
+───────────────────────────────────────────────────────
+Overhead $0.0043   Tasarruf ~$0.0374   Net +$0.0331 ✅
+```
+
+### Test Sonuçları (Faz-D)
+- ✅ **96/96 pytest geçti** — Faz-B (33) + Faz-C (51) + Faz-D (12) tümü yeşil
+- Yeni test: `tests/test_telemetry.py` (12 test — SessionStats event kayıtları, emitter fire-and-forget, MCP exception yutma)
+- `test_compressor.py` ve `test_planner.py` cost_usd dönüşü için güncellendi
+- ✅ Lint: `ruff` temiz
+- ✅ Smoke test: telemetry server `savings_events` tablosu oluşuyor, kolonlar doğrulandı
+
+### Yeni dosyalar/değişiklikler (Faz-D)
+- **Yeni**: `hackeragent/core/telemetry.py` (~260 LOC)
+- **Yeni**: `hackeragent/tests/test_telemetry.py` (12 test)
+- **Genişletildi**: `mcp-servers/mcp-telemetry/server.py` (+~130 LOC — savings tablosu + 2 tool)
+- **Güncellendi**: `compressor.py`, `planner.py`, `tool_cache.py`, `orchestrator.py`, `cli/main.py`
+
+### Backlog (Faz-E için)
+- P2: Tasarruf heuristiklerini empirik verilerle kalibre et (gerçek CTF session'larından ölçüm)
+- P2: `hackeragent --savings-report` CLI flag'i — geçmiş tüm session'lar için toplam
+- P3: Dashboard UI (Textual) — live savings counter + LLM maliyet grafiği
+- P3: Cost-based model tier auto-tuning — session geçmişine bakarak `cheap`/`standard` arasında otomatik seçim
+
 ## Backlog / İyileştirmeler
 - P2: `rag-engine` için daha hızlı ingest — toplu PayloadsAllTheThings ingest zamanlaması
 - P2: REPL'de streaming LLM çıktısı (şu an bloklama var)

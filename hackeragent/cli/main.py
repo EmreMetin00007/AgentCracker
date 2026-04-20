@@ -246,6 +246,14 @@ def _handle_slash(orch: Orchestrator, console, line: str) -> bool:
                 print(f"  {s.step}. {s.goal} | tools={s.expected_tools}")
         return True
 
+    if cmd == "/report":
+        report = orch.cost_report()
+        if console:
+            console.print(report)
+        else:
+            print(report)
+        return True
+
     if cmd == "/scope":
         sub = parts[1].lower() if len(parts) > 1 else "list"
         if sub == "list":
@@ -288,6 +296,7 @@ def _handle_slash(orch: Orchestrator, console, line: str) -> bool:
             "  /circuit               Circuit breaker istatistikleri (tool sağlığı)\n"
             "  /cache [clear]         Tool cache istatistikleri / temizle\n"
             "  /plan                  Aktif görev planını göster\n"
+            "  /report                💰 Cost-aware session raporu\n"
             "  /models                Akıllı model router tier'larını göster\n"
             "  /scope list            Aktif scope'u göster\n"
             "  /scope add <hedef>     Scope'a host/IP/CIDR ekle\n"
@@ -344,7 +353,8 @@ def _run_repl(orch: Orchestrator, console) -> int:
     # Session özeti
     if console:
         console.print("\n" + orch.budget_summary())
-        console.print(f"[dim]Session kaydedildi:[/dim] [cyan]{orch.session.id}[/cyan]")
+        console.print("\n" + orch.cost_report())
+        console.print(f"\n[dim]Session kaydedildi:[/dim] [cyan]{orch.session.id}[/cyan]")
     return 0
 
 
@@ -400,6 +410,7 @@ def _run_single(orch: Orchestrator, task: str, console) -> int:
     _run_turn(orch, console, task)
     if console:
         console.print("\n" + orch.budget_summary())
+        console.print("\n" + orch.cost_report())
     return 0
 
 

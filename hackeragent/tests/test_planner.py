@@ -89,12 +89,15 @@ def test_planner_disabled_returns_none():
 def test_planner_runs_for_complex_task():
     llm = MagicMock()
     llm.chat.return_value = LLMReply(
-        content='{"steps": [{"step": 1, "goal": "recon", "expected_tools": ["nmap"]}]}'
+        content='{"steps": [{"step": 1, "goal": "recon", "expected_tools": ["nmap"]}]}',
+        cost_usd=0.0008,
     )
     p = Planner(llm)
     plan = p.plan("example.com için kapsamlı pentest yap ve zafiyet raporu üret")
     assert plan is not None
     assert len(plan.steps) == 1
+    # Yeni: LLM cost plan'da saklı
+    assert plan.llm_cost_usd == 0.0008
     llm.chat.assert_called_once()
 
 

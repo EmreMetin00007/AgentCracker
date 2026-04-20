@@ -84,6 +84,8 @@ class ToolCache:
     total_lookups: int = 0
     total_hits: int = 0
     total_stores: int = 0
+    # Cache hit olduğunda çağrılan opsiyonel callback: (qname, result_chars) → None
+    on_hit: object = None
 
     def _key(self, qname: str, args: dict) -> str:
         """Kararlı hash — dict sırasından bağımsız."""
@@ -114,6 +116,12 @@ class ToolCache:
         self.total_hits += 1
         log.info("Cache HIT: %s (age=%.0fs, ttl=%ds, hits=%d)",
                  qname, age, entry.ttl, entry.hit_count)
+        # Callback — session stats için
+        if callable(self.on_hit):
+            try:
+                self.on_hit(qname, len(entry.result))
+            except Exception as e:
+                log.debug("on_hit callback failed (ignored): %s", e)
         return entry.result
 
     def put(self, qname: str, args: dict, result: str) -> None:

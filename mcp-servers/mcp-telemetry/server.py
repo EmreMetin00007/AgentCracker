@@ -75,6 +75,23 @@ def init_db():
         )
     ''')
 
+    # Savings / optimization events (cost-aware telemetry)
+    # event_type: 'compression' | 'cache_hit' | 'planner' | 'reflection' | 'parallel'
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS savings_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT NOT NULL,
+            event_type TEXT NOT NULL,
+            details TEXT DEFAULT '{}',
+            cost_usd REAL DEFAULT 0,
+            saved_tokens INTEGER DEFAULT 0,
+            saved_usd REAL DEFAULT 0,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    c.execute("CREATE INDEX IF NOT EXISTS idx_savings_session ON savings_events(session_id)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_savings_type ON savings_events(event_type)")
+
     conn.commit()
     conn.close()
 
@@ -387,8 +404,163 @@ def get_metrics_dashboard(period: str = "24h") -> str:
 
 
 # ============================================================
-# YARDIMCI
+# COST-AWARE SAVINGS EVENTS (Faz-D)
 # ============================================================
+
+@mcp.tool()
+def log_savings_event(
+    session_id: str,
+    event_type: str,
+    details_json: str = "{}",
+    cost_usd: float = 0.0,
+    saved_tokens: int = 0,
+    saved_usd: float = 0.0,
+) -> str:
+    """Cost-aware optimization olayını kaydet.
+
+    Compressor, ToolCache, Planner, Reflection gibi mekanizmaların tasarruf
+    metriklerini saklar. Session sonunda `get_savings_report` ile raporlanır.
+
+    Args:
+        session_id: HackerAgent session ID
+        event_type: 'compression' | 'cache_hit' | 'planner' | 'reflection' | 'parallel'
+        details_json: JSON string — event-spesifik detaylar
+        cost_usd: Bu olayın LLM maliyeti (varsa — compression/planner için)
+        saved_tokens: Tahmini tasarruf edilen token sayısı
+        saved_usd: Tahmini $ tasarruf
+    """
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute(
+            "INSERT INTO savings_events (session_id, event_type, details, cost_usd, saved_tokens, saved_usd) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (session_id, event_type, details_json, cost_usd, saved_tokens, saved_usd),
+        )
+        conn.commit()
+        conn.close()
+        return f"✓ Savings event logged: {event_type} | cost=${cost_usd:.4f} | saved=${saved_usd:.4f}"
+    except Exception as e:
+        return f"HATA: Savings event kaydedilemedi: {e}"
+
+
+@mcp.tool()
+def get_savings_report(session_id: str = "") -> str:
+    """Bir session (veya tüm) için cost-aware optimization raporunu üret.
+
+    "Bu görev $X maliyetle tamamlandı, %Y token'ı compression kurtardı,
+    %Z tool çağrısı cache'den geldi, plan %K doğrulukla izlendi"
+
+    Args:
+        session_id: Spesifik session ID; boş bırakılırsa tüm session'lar agrega
+    """
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+
+        where = "WHERE session_id = ?" if session_id else ""
+        params: tuple = (session_id,) if session_id else ()
+
+        # Event bazlı agrega
+        rows = c.execute(
+            f"SELECT event_type, COUNT(*), SUM(cost_usd), SUM(saved_tokens), SUM(saved_usd) "
+            f"FROM savings_events {where} GROUP BY event_type",
+            params,
+        ).fetchall()
+
+        # Session genel LLM cost (llm_calls tablosundan)
+        # session_id llm_calls tablosunda direkt yok, toplam alıyoruz
+        total_llm_cost = 0.0
+        total_llm_calls = 0
+        if not session_id:
+            row = c.execute("SELECT COUNT(*), ROUND(SUM(cost_usd), 4) FROM llm_calls").fetchone()
+            total_llm_calls = row[0] or 0
+            total_llm_cost = row[1] or 0.0
+
+        conn.close()
+
+        if not rows:
+            scope = f"session '{session_id}'" if session_id else "tüm session'lar"
+            return f"{scope} için kayıtlı savings event yok.\nHenüz compression/cache/planner tetiklenmedi."
+
+        # Map event_type → aggregates
+        by_type: dict[str, dict] = {}
+        for r in rows:
+            by_type[r[0]] = {
+                "count": r[1] or 0,
+                "cost_usd": round(r[2] or 0, 4),
+                "saved_tokens": r[3] or 0,
+                "saved_usd": round(r[4] or 0, 4),
+            }
+
+        total_overhead = sum(t["cost_usd"] for t in by_type.values())
+        total_saved = sum(t["saved_usd"] for t in by_type.values())
+        net_benefit = total_saved - total_overhead
+
+        scope_label = f"Session: {session_id}" if session_id else "Tüm Session'lar"
+        output = [
+            "╔══════════════════════════════════════════════════════╗",
+            "║     💰  Cost-Aware Savings Report                   ║",
+            f"║     {scope_label:<47} ║",
+            "╚══════════════════════════════════════════════════════╝",
+            "",
+        ]
+
+        if not session_id and total_llm_calls:
+            output.append(f"🧠 Toplam LLM çağrısı: {total_llm_calls}")
+            output.append(f"💵 Toplam LLM maliyeti: ${total_llm_cost:.4f}")
+            output.append("")
+
+        emoji = {
+            "compression": "📦",
+            "cache_hit": "♻️",
+            "planner": "🗺️",
+            "reflection": "🪞",
+            "parallel": "⚡",
+        }
+
+        for etype, stats in sorted(by_type.items()):
+            em = emoji.get(etype, "•")
+            output.append(f"{em} {etype.upper()}")
+            output.append(f"   Tetiklenme: {stats['count']}")
+            if stats["cost_usd"]:
+                output.append(f"   Ek maliyet: ${stats['cost_usd']:.4f}")
+            if stats["saved_tokens"]:
+                output.append(f"   Tasarruf: ~{stats['saved_tokens']:,} token")
+            if stats["saved_usd"]:
+                output.append(f"   Tasarruf: ~${stats['saved_usd']:.4f}")
+            output.append("")
+
+        output.append("─" * 58)
+        output.append(f"Optimizasyon overhead'i: ${total_overhead:.4f}")
+        output.append(f"Tahmini tasarruf:         ${total_saved:.4f}")
+        if net_benefit >= 0:
+            output.append(f"✅ NET FAYDA:              ${net_benefit:.4f}")
+        else:
+            output.append(f"⚠️  NET:                    ${net_benefit:.4f} (overhead > tasarruf)")
+        output.append("")
+
+        # Cache hit rate (compression turnaround hesapla)
+        cache = by_type.get("cache_hit", {})
+        if cache.get("count"):
+            output.append(
+                f"♻️  Cache hit rate etki: {cache['count']} çağrı MCP'yi bypass etti "
+                f"(~{cache.get('saved_tokens', 0):,} token bağlam tasarrufu)"
+            )
+        comp = by_type.get("compression", {})
+        if comp.get("count"):
+            pct = 100 * comp.get("saved_tokens", 0) / max(1, comp.get("saved_tokens", 0) + 40000)
+            output.append(
+                f"📦 Compression etki: {comp['count']} sıkıştırma, "
+                f"~{comp.get('saved_tokens', 0):,} token kurtarıldı"
+            )
+        pl = by_type.get("planner", {})
+        if pl.get("count"):
+            output.append(f"🗺️  Plan {pl['count']} kez üretildi (ekstra maliyet: ${pl.get('cost_usd', 0):.4f})")
+
+        return "\n".join(output)
+    except Exception as e:
+        return f"HATA: Savings report üretilemedi: {e}"
 
 def _parse_period(period: str) -> int:
     """Period string'i saat cinsine çevir. 'all' için 0 döner."""

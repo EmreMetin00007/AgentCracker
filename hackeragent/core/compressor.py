@@ -47,6 +47,7 @@ class CompressionResult:
     summary_chars: int
     before_chars: int
     after_chars: int
+    llm_cost_usd: float = 0.0
 
 
 class Compressor:
@@ -98,10 +99,10 @@ class Compressor:
         if not middle:
             return CompressionResult(False, 0, 0, before, before)
 
-        summary_text = self._summarize(middle)
+        summary_text, llm_cost = self._summarize(middle)
         if not summary_text:
             log.warning("Compression skipped: özet üretilemedi")
-            return CompressionResult(False, 0, 0, before, before)
+            return CompressionResult(False, 0, 0, before, before, 0.0)
 
         summary_msg = {
             "role": "system",
@@ -119,10 +120,10 @@ class Compressor:
             "Compression: %d mesaj → 1 özet | %d → %d char (%.1f%% azalma)",
             len(middle), before, after, 100 * (1 - after / max(before, 1)),
         )
-        return CompressionResult(True, len(middle), len(summary_text), before, after)
+        return CompressionResult(True, len(middle), len(summary_text), before, after, llm_cost)
 
-    def _summarize(self, segment: list[dict]) -> str:
-        """Cheap LLM ile mesaj segmentini özetle."""
+    def _summarize(self, segment: list[dict]) -> tuple[str, float]:
+        """Cheap LLM ile mesaj segmentini özetle. (text, llm_cost_usd) döner."""
         # Hazır özet prompt'u
         raw_transcript_parts = []
         for m in segment:
@@ -174,7 +175,10 @@ class Compressor:
                 max_tokens=1500,
                 temperature=0.2,
             )
-            return (reply.content or "").strip()
+            return (reply.content or "").strip(), float(reply.cost_usd or 0.0)
         except Exception as e:
             log.error("Compression LLM hata: %s", e)
-            return ""
+            return "", 0.0
+
+    # Diğer yerlerde should_compress check ve compress çağrılıyor — compress() artık
+    # llm_cost_usd da içeren CompressionResult döndürüyor.

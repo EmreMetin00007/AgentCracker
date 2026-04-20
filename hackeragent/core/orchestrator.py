@@ -44,6 +44,7 @@ from hackeragent.core.rag_context import enrich_from_rag_and_memory
 from hackeragent.core.router import ModelRouter, ModelTiers
 from hackeragent.core.scope import ScopeGuard
 from hackeragent.core.session import Session
+from hackeragent.core.telemetry import SessionStats, TelemetryEmitter
 from hackeragent.core.tool_cache import ToolCache
 from hackeragent.core.tool_router import ToolRouter, _FAILURE_PREFIXES
 from hackeragent.core.vision import model_supports_vision, to_multimodal_tool_message
@@ -71,6 +72,7 @@ class Orchestrator:
     compressor: Compressor = field(init=False)
     planner: Planner = field(init=False)
     model_router: ModelRouter = field(init=False)
+    stats: SessionStats = field(init=False)
     session: Session = field(init=False)
     tools_schema: list[dict] = field(default_factory=list)
     progress: ProgressCallback | None = None
@@ -143,6 +145,10 @@ class Orchestrator:
         self.planner_enabled = bool(self.config.get("llm.planner_enabled", True))
         self.parallel_tools_enabled = bool(self.config.get("safety.parallel_tool_execution", True))
         self.vision_enabled = bool(self.config.get("llm.vision_enabled", True))
+        # Cost-aware telemetry — session stats
+        self.stats = SessionStats(session_id=self.session.id)
+        # ToolCache'e hit callback bağla — cache hit event'i stats'e kaydedilir
+        self.tool_cache.on_hit = self.stats.record_cache_hit
 
     # ─── Lifecycle ────────────────────────────────────────────────────────
     def start(self) -> None:
@@ -157,6 +163,10 @@ class Orchestrator:
             breaker=self.breaker,
             cache=self.tool_cache,
         )
+        # Telemetry emitter — fire-and-forget MCP telemetry yazımı
+        emitter = TelemetryEmitter(self.mcp.call_tool, server_name="telemetry")
+        self.stats.attach_emitter(emitter)
+        self.stats.session_id = self.session.id
         self.tools_schema = tools_to_openai_schema(self.mcp.list_tools())
         self.session.messages = [{"role": "system", "content": build_system_prompt()}]
         self.session.save()
@@ -238,9 +248,14 @@ class Orchestrator:
                     plan_msg = plan.to_system_message()
                     self.session.messages.append({"role": "system", "content": plan_msg})
                     self._emit("planner", {"steps": len(plan.steps)})
-                    if plan.raw_reasoning:
-                        # Plan maliyetini yaklaşık kaydet (cheap model — gerçek cost API'den gelir)
-                        pass
+                    # 💰 Cost-aware: plan LLM maliyetini ve tahmini tasarrufu kaydet
+                    self.stats.record_planner(
+                        step_count=len(plan.steps),
+                        llm_cost_usd=plan.llm_cost_usd,
+                    )
+                    # Plan maliyetini bütçeye de ekle
+                    if plan.llm_cost_usd > 0:
+                        self.budget.register(self.model_router.tiers.cheap, plan.llm_cost_usd)
             except Exception as e:
                 log.debug("Planner atlandı: %s", e)
 
@@ -264,6 +279,16 @@ class Orchestrator:
                             "before": cr.before_chars,
                             "after": cr.after_chars,
                         })
+                        # 💰 Cost-aware: sıkıştırma olayını kaydet
+                        self.stats.record_compression(
+                            removed_count=cr.removed_count,
+                            before_chars=cr.before_chars,
+                            after_chars=cr.after_chars,
+                            llm_cost_usd=cr.llm_cost_usd,
+                        )
+                        # Sıkıştırma maliyetini bütçeye ekle
+                        if cr.llm_cost_usd > 0:
+                            self.budget.register(self.model_router.tiers.cheap, cr.llm_cost_usd)
                         self.session.save()
                 except Exception as e:
                     log.warning("Compression hatası (atlandı): %s", e)
@@ -395,6 +420,15 @@ class Orchestrator:
                 })
                 self._force_cheap_next = True
                 self._emit("reflection", {"failed_tools": failed_tools})
+                # 💰 Cost-aware
+                self.stats.record_reflection(failed_tools)
+
+            # 💰 Parallel event — birden fazla tool aynı anda yürüdüyse kaydet
+            if self.parallel_tools_enabled and len(reply.tool_calls) > 1:
+                self.stats.record_parallel(
+                    parallel_count=len(reply.tool_calls),
+                    total_calls=len(reply.tool_calls),
+                )
             self.session.save()
 
         if budget_stopped:
@@ -439,6 +473,12 @@ class Orchestrator:
         self.current_plan = None
         self.tool_cache.invalidate()  # yeni session → cache'i sıfırla
         self._force_cheap_next = False
+        # Stats'ı da sıfırla — yeni session yeni raporlanacak
+        old_emitter = self.stats._emitter
+        self.stats = SessionStats(session_id=self.session.id)
+        if old_emitter:
+            self.stats.attach_emitter(old_emitter)
+        self.tool_cache.on_hit = self.stats.record_cache_hit
         self.session.save()
 
     def available_tools(self) -> list[tuple[str, str]]:
@@ -446,6 +486,13 @@ class Orchestrator:
 
     def budget_summary(self) -> str:
         return self.budget.summary()
+
+    def cost_report(self) -> str:
+        """Cost-aware session raporu — compression/cache/planner tasarruflarını özetler."""
+        return self.stats.render_report(
+            total_llm_cost_usd=self.budget.total_cost_usd,
+            total_llm_calls=self.budget.call_count,
+        )
 
     def _emit(self, event: str, data: dict) -> None:
         log.debug("event=%s data=%s", event, data)
