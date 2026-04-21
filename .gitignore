@@ -1,54 +1,53 @@
-.claude/
-.hackeragent/
+# ─── Python & IDE artefaktları ─────────────────────────────
 __pycache__/
 *.pyc
-*.db
+*.pyo
+*.pyd
 .pytest_cache/
+.ruff_cache/
+.mypy_cache/
 .DS_Store
 .venv/
 venv/
 env/
+.vscode/
+.idea/
 
-# Hassas env dosyaları
-.env
-.env.local
-
-# Python paket artefaktları
+# ─── Paket build çıktıları ─────────────────────────────────
 *.egg-info/
+*.egg
 build/
 dist/
-*.egg
 
-# Test/validation scripts
+# ─── Çalışma zamanı veri dizinleri ─────────────────────────
+.claude/         # legacy v2 dizini (geriye uyumluluk)
+.hackeragent/    # v3 kullanıcı veri dizini
+*.db
+*.sqlite
+*.sqlite3
+
+# ─── Hassas environment / credential ───────────────────────
+.env
+.env.local
+.env.*
+*.env
+credentials.json
+.credentials
+*.pem
+*.key
+
+# ─── Test / ad-hoc script kalıntıları ──────────────────────
 validate.py
 deep_audit.py
 idor_test.py
 
-# Agent çalışma dosyaları
+# ─── Agent çalışma çıktıları ───────────────────────────────
 *.nmap
 *.gnmap
 *.xml
 loot/
 screenshots/
 challenge_files/
--e 
-# Environment and credential files
-.env
-.env.*
-*.env
-credentials.json
-*.pem
-*.key
-.credentials
--e 
-# Environment and credential files
-.env
-.env.*
-*.env
-credentials.json
-*.pem
-*.key
-.credentials
 -e 
 # Environment and credential files
 .env
