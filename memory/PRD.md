@@ -303,3 +303,50 @@ Overhead $0.0043   Tasarruf ~$0.0374   Net +$0.0331 ✅
 - P3: TUI dashboard (Textual tabanlı) — telemetry + active tool calls canlı göster
 - P3: Router'da LLM-tabanlı classifier (maliyet analizi yap, ROI varsa devreye al)
 - P3: Self-reflection'da ayrı bir "cheap LLM çağrısı + suggestion" yaklaşımı (şu an nudge-only)
+
+---
+
+## Faz-E: Kararlılık + Yeni Özellikler + Maliyet (2026-04-21)
+
+Kullanıcı isteği: A (kararlılık) + B (özellikler) + C (maliyet) + F (sağlık).
+
+### A — Kararlılık (yapıldı)
+1. **Config validator** — `core/config_validator.py`: startup'ta şema doğrulama
+2. **Health check** — `core/health.py` + `--health` + `/health`
+3. **Crash reporter** — `core/crash_reporter.py` + `/crashes` + `install_excepthook`
+4. **Graceful shutdown** — SIGINT/SIGTERM handler, `orch.cancel()`, REPL `/cancel`
+5. **LLM call crash logging** — ask() içindeki LLM hatası otomatik rapor
+
+### B — Yeni Özellikler (yapıldı)
+1. **Workflow launcher** — `--workflow bug-bounty|ctf|supervisor` + `--list-workflows`
+2. **Multi-target batch** — `--targets <file>` (her satır için yeni session)
+3. **Agrega savings** — `--savings-report` (telemetry.db'den tüm session'lar)
+4. **Webhook notifier** — Discord/Slack/generic + dedupe + `/notify test`
+
+### C — Maliyet (yapıldı)
+1. **OpenRouter prompt caching** — `llm.prompt_cache_enabled` + `--prompt-cache`
+2. **LLM-based tier classifier** — `llm.router_llm_classifier` (opt-in)
+3. **Session replay** — `--replay <session-id>`
+
+### F — Sağlık & CI (yapıldı)
+- Ruff: 42 hata → 0 (F821 datetime bug fix dahil)
+- pip-audit: temiz
+- GitHub Actions CI — Python 3.10/3.11/3.12 matrix + lint + test + audit
+
+### Yeni dosyalar
+- `hackeragent/core/` — config_validator.py, health.py, crash_reporter.py,
+  notifier.py, workflow_launcher.py, replay.py
+- `hackeragent/tests/` — test_config_validator.py (13), test_notifier.py (7),
+  test_stability.py (8), test_prompt_cache.py (6), test_health.py (7),
+  test_replay_and_classifier.py (13)
+- `.github/workflows/ci.yml`
+
+### Test Sonuçları (Faz-E)
+- **156/156 pytest PASSED** (Faz-D 102 + Faz-E 54 yeni test)
+- ruff clean, `--validate-config` ✓, `--health` → 5/5 MCP server (116 tool)
+
+### Backlog (Faz-F+)
+- P2: Textual TUI dashboard
+- P2: HackerOne/Bugcrowd direkt submit
+- P3: PDF/HTML rapor export
+- P3: Tool output redaction (PII maskeleme)

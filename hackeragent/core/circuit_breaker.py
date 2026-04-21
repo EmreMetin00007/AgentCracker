@@ -12,7 +12,7 @@ MCPManager'dan sunucuyu yeniden başlatmasını isteyebilir.
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from hackeragent.utils.logger import get_logger
 

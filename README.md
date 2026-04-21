@@ -1,4 +1,4 @@
-# 🔴 HackerAgent v3.0
+# 🔴 HackerAgent v3.1
 
 **Otonom Bug Bounty Avcısı & CTF Çözücü — Claude Code CLI'dan Bağımsız**
 
@@ -9,10 +9,12 @@ graph hafızasına, RAG bilgi tabanına ve telemetriye tek bir CLI üzerinden
 erişir. Kill Chain metodolojisi, OODA Loop karar döngüsü ve 200+ zafiyet tipi
 ile donatılmıştır.
 
-> **v2.0 → v3.0 değişikliği:** Claude Code CLI bağımlılığı tamamen kaldırıldı.
-> Artık Node.js, `npm install -g @anthropic-ai/claude-code` veya
-> `~/.claude/settings.json` yok. `hackeragent` komutu kendi Python orkestratörünü
-> çalıştırır; MCP server'lar aynen korunmuştur.
+> **v3.0 → v3.1 değişikliği:** Faz-E yenilikleri eklendi:
+> - ✅ **Kararlılık**: config validator, health check, crash reporter, graceful shutdown
+> - ✅ **Yeni özellikler**: `--workflow`, `--targets` (batch), `--savings-report`, webhook notifier
+> - ✅ **Maliyet**: OpenRouter prompt caching, LLM-based tier classifier, session replay
+> - ✅ **CI**: GitHub Actions — lint + test + audit
+> - 156 unit test (+%53), tüm ruff uyarıları temiz
 
 ## ⚡ Tek Komutla Kurulum
 
@@ -101,6 +103,27 @@ hackeragent
 ## 🎯 Kullanım Örnekleri
 
 ```bash
+# Sağlık kontrolü & validation
+hackeragent --validate-config    # config.yaml şemasını doğrula
+hackeragent --health             # 5 MCP server health-check
+hackeragent --list-workflows     # bug-bounty / ctf / supervisor
+
+# Workflow launcher — hazır metodoloji ile başlat
+hackeragent --workflow bug-bounty --task "example.com için bounty avı"
+hackeragent --workflow ctf --task "picoCTF Binary Exploitation"
+
+# Batch multi-target mode
+hackeragent --targets targets.txt --task "Her hedef için full recon"
+
+# Agrega savings raporu (tüm sessionların toplamı)
+hackeragent --savings-report
+
+# Maliyet optimizasyonu
+hackeragent --prompt-cache       # OpenRouter ephemeral cache (~%50 input tasarruf)
+hackeragent --replay <session-id> # Eski session'u yeni promptlarla regression test
+```
+
+```bash
 # İnteraktif REPL (streaming varsayılan aktif)
 hackeragent
 
@@ -118,7 +141,14 @@ hackeragent
 /scope add 10.10.10.5  # Scope'a host/IP/CIDR ekle
 /scope rm example.com  # Scope'tan kaldır
 /scope clear           # Scope'u sıfırla
-/reset                 # Sohbet geçmişini sıfırla
+/cache                 # Tool cache istatistikleri
+/cache clear           # Tool cache'i temizle
+/plan                  # Aktif görev planını göster
+/report                # 💰 Cost-aware session raporu
+/health                # 🏥 MCP server health-check
+/crashes               # Son crash raporlarını göster
+/notify test           # Webhook notifier test bildirimi
+/cancel                # Mevcut görev turunu iptal et
 /help                  # Tüm komutlar
 /exit                  # Çık
 ```

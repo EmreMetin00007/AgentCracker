@@ -19,8 +19,8 @@ import re
 import uuid
 import asyncio
 import base64
+import requests  # Used for Hybrid Orchestration (Phase C)
 from datetime import datetime
-from typing import Optional
 from mcp.server.fastmcp import FastMCP
 
 # HackerAgent veri dizini (geriye uyumluluk: HACKERAGENT_HOME env > ~/.hackeragent)
@@ -894,7 +894,7 @@ def curl_request(
         show_headers: Response header'larını göster
         extra_args: Ek curl argümanları
     """
-    cmd = f"curl -s"
+    cmd = "curl -s"
     
     if show_headers:
         cmd += " -v"
@@ -1064,7 +1064,6 @@ def searchsploit_search(
 # ============================================================
 # SUPERVISOR DAEMON & HYBRID ORCHESTRATION (Phase C)
 # ============================================================
-import requests
 
 @mcp.tool()
 def qwen_analyze(
@@ -1287,7 +1286,7 @@ def parallel_llm_analyze(
         vulnerability_hint: Hermes'e verilecek zafiyet ipucu (boş: Qwen sonucundan çıkarılır)
         openrouter_api_key: OpenRouter API anahtarı
     """
-    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from concurrent.futures import ThreadPoolExecutor
 
     api_key = openrouter_api_key or get_api_key_secure()
     if not api_key:
@@ -1424,7 +1423,7 @@ def stop_recon_daemon(target: str) -> str:
         proc.wait(timeout=5)
         del daemon_processes[target]
         return f"Recon Daemon DURDURULDU. Hedef: {target}"
-    except Exception as e:
+    except Exception:
         try:
             proc.kill()
             del daemon_processes[target]
@@ -1897,7 +1896,7 @@ def screenshot_analyze(
         if r['returncode'] != 0:
             r = run_command(f"wkhtmltoimage --quality 80 {shlex.quote(url)} {image_path} 2>/dev/null", timeout=30)
         if r['returncode'] != 0:
-            return f"HATA: Screenshot alınamadı. cutycapt veya wkhtmltoimage kurun."
+            return "HATA: Screenshot alınamadı. cutycapt veya wkhtmltoimage kurun."
         outputs.append(f"📸 Screenshot alındı: {image_path}")
     
     if not image_path or not os.path.exists(image_path):
@@ -1924,7 +1923,7 @@ def screenshot_analyze(
             if r['stdout'].strip():
                 steg_results.append(f"[{cmd_name}]\n{r['stdout'].strip()[:500]}")
         if steg_results:
-            outputs.append(f"🔍 Steganografi/Hidden Data:\n" + "\n".join(steg_results))
+            outputs.append("🔍 Steganografi/Hidden Data:\n" + "\n".join(steg_results))
     
     return "\n\n".join(outputs) if outputs else "Analiz sonucu boş."
 
@@ -2119,7 +2118,7 @@ def cloud_enum(
             outputs.append("☁️ GCP Buckets:\n" + "\n".join(gcp_found))
 
     # cloud_enum tool varsa çalıştır
-    r = run_command(f"which cloud_enum 2>/dev/null", timeout=3)
+    r = run_command("which cloud_enum 2>/dev/null", timeout=3)
     if r["returncode"] == 0:
         r = run_command(f"cloud_enum -k {shlex.quote(keyword)} {extra_args}", timeout=120)
         if r["stdout"].strip():
@@ -2142,7 +2141,7 @@ def aws_security_check(
         extra_args: Ek argümanlar
     """
     # Prowler dene
-    r = run_command(f"which prowler 2>/dev/null", timeout=3)
+    r = run_command("which prowler 2>/dev/null", timeout=3)
     if r["returncode"] == 0:
         svc = f"-S {service}" if service != "all" else ""
         cmd = f"prowler aws -p {shlex.quote(profile)} {svc} --severity critical high {extra_args}"
@@ -2150,7 +2149,7 @@ def aws_security_check(
         return format_output(result)
 
     # ScoutSuite dene
-    r = run_command(f"which scout 2>/dev/null", timeout=3)
+    r = run_command("which scout 2>/dev/null", timeout=3)
     if r["returncode"] == 0:
         cmd = f"scout aws --profile {shlex.quote(profile)} {extra_args}"
         result = run_command(cmd, timeout=600)
@@ -2704,8 +2703,8 @@ def self_improve(
             json.dump(logs, f, indent=2)
 
         total_engagements = len(logs)
-        avg_findings = sum(l.get("findings_count", 0) for l in logs) / max(total_engagements, 1)
-        avg_success = sum(l.get("success_rate", 0) for l in logs) / max(total_engagements, 1)
+        avg_findings = sum(log.get("findings_count", 0) for log in logs) / max(total_engagements, 1)
+        avg_success = sum(log.get("success_rate", 0) for log in logs) / max(total_engagements, 1)
 
         return f"""📊 Self-Improvement Log Güncellendi
 {'='*40}
@@ -2873,7 +2872,7 @@ def interactsh_poll(
             if raw_req:
                 output += f"  Request: {raw_req}...\n"
 
-        output += f"\n🎯 SONUÇ: Hedef sunucu OOB callback gönderdi → Blind zafiyet DOĞRULANDI!\n"
+        output += "\n🎯 SONUÇ: Hedef sunucu OOB callback gönderdi → Blind zafiyet DOĞRULANDI!\n"
         return output
     except Exception as e:
         return f"HATA: Log okunamadı: {e}"
@@ -3458,7 +3457,7 @@ def secretfinder_scan(
         extra_args: Ek argümanlar
     """
     # SecretFinder kurulu mu dene
-    r = run_command(f"python3 -c 'from SecretFinder import SecretFinder' 2>/dev/null", timeout=5)
+    r = run_command("python3 -c 'from SecretFinder import SecretFinder' 2>/dev/null", timeout=5)
     if r["returncode"] == 0:
         cmd = f"python3 -m SecretFinder -i {shlex.quote(url)} -o cli {extra_args}"
         result = run_command(cmd, timeout=60)
@@ -3586,7 +3585,7 @@ def subdomain_takeover_check(
     outputs = []
 
     # subjack dene
-    r = run_command(f"which subjack 2>/dev/null", timeout=3)
+    r = run_command("which subjack 2>/dev/null", timeout=3)
     if r["returncode"] == 0:
         r = run_command(f"subjack -w {subs_file} -t 50 -timeout 10 -ssl -v {extra_args}", timeout=120)
         if r["stdout"].strip():

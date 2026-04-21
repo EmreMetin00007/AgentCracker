@@ -16,14 +16,19 @@ Kullanım:
 from __future__ import annotations
 
 import argparse
+import signal
 import sys
 from datetime import datetime
 
 from hackeragent import __version__
 from hackeragent.cli.banner import BANNER
 from hackeragent.core.config import get_config
+from hackeragent.core.config_validator import format_validation_result, validate_config
+from hackeragent.core.crash_reporter import install_excepthook, list_crashes, report_crash
+from hackeragent.core.health import check_health, format_health_report
 from hackeragent.core.orchestrator import Orchestrator
 from hackeragent.core.session import Session
+from hackeragent.core.workflow_launcher import list_workflows, load_workflow_prompt
 from hackeragent.utils.logger import setup_logging
 
 try:
@@ -285,6 +290,65 @@ def _handle_slash(orch: Orchestrator, console, line: str) -> bool:
                 console.print("[dim]Kullanım:[/dim] /scope list | /scope add <host> | /scope rm <host> | /scope clear")
         return True
 
+    if cmd == "/health":
+        results = check_health(orch.mcp)
+        txt = format_health_report(results)
+        if console:
+            unhealthy = sum(1 for r in results.values() if not r["healthy"])
+            color = "red" if unhealthy else "green"
+            console.print(f"[{color}]{txt}[/{color}]")
+        else:
+            print(txt)
+        return True
+
+    if cmd == "/crashes":
+        crashes = list_crashes(limit=10)
+        if not crashes:
+            if console:
+                console.print("[dim]Kayıtlı crash raporu yok. ✓[/dim]")
+            else:
+                print("Kayıtlı crash yok.")
+            return True
+        if HAS_RICH and console:
+            t = Table(title="Son Crash Raporları (~/.hackeragent/crashes/)", show_lines=False)
+            t.add_column("Zaman", style="dim")
+            t.add_column("Component", style="cyan")
+            t.add_column("Tip", style="red")
+            t.add_column("Mesaj")
+            for c in crashes:
+                t.add_row(c["timestamp"][:19], c["component"], c["exception_type"], c["message"])
+            console.print(t)
+        else:
+            for c in crashes:
+                print(f"  {c['timestamp']} [{c['component']}] {c['exception_type']}: {c['message']}")
+        return True
+
+    if cmd == "/notify":
+        # Test webhook: /notify test  veya  /notify critical "Başlık" "Özet"
+        sub = parts[1] if len(parts) > 1 else "test"
+        if sub == "test":
+            sent = orch.notifier.send_finding(
+                title="HackerAgent notifier test",
+                severity="info",
+                target="test.local",
+                summary="Bu bir test bildirimdir.",
+            )
+            if console:
+                if sent:
+                    console.print("[green]✓[/green] Test bildirimi gönderildi.")
+                else:
+                    console.print("[yellow]⚠[/yellow] Bildirim gönderilmedi (notifier disabled veya severity filtreli).")
+            return True
+        if console:
+            console.print("[dim]Kullanım:[/dim] /notify test")
+        return True
+
+    if cmd == "/cancel":
+        orch.cancel()
+        if console:
+            console.print("[yellow]⏸[/yellow] İptal flag'i set edildi — bir sonraki iterasyonda durulacak.")
+        return True
+
     if cmd == "/help":
         help_txt = (
             "[bold]Komutlar:[/bold]\n"
@@ -297,6 +361,10 @@ def _handle_slash(orch: Orchestrator, console, line: str) -> bool:
             "  /cache [clear]         Tool cache istatistikleri / temizle\n"
             "  /plan                  Aktif görev planını göster\n"
             "  /report                💰 Cost-aware session raporu\n"
+            "  /health                🏥 MCP server health check\n"
+            "  /crashes               Son crash raporlarını göster\n"
+            "  /notify test           Webhook notifier'ı test et\n"
+            "  /cancel                Mevcut görev turunu iptal et\n"
             "  /models                Akıllı model router tier'larını göster\n"
             "  /scope list            Aktif scope'u göster\n"
             "  /scope add <hedef>     Scope'a host/IP/CIDR ekle\n"
@@ -432,10 +500,160 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Scope entry (IP/CIDR/domain/*.domain). Birden fazla kez verilebilir")
     p.add_argument("--no-stream", action="store_true", help="Streaming yanıtı kapat")
     p.add_argument("--log-level", default=None, help="Log level (DEBUG/INFO/WARNING/ERROR)")
+    # Faz-E yeni özellikler
+    p.add_argument("--workflow", default=None, metavar="NAME",
+                   help="Workflow yükle (bug-bounty, ctf, supervisor)")
+    p.add_argument("--list-workflows", action="store_true",
+                   help="Mevcut workflow'ları listele ve çık")
+    p.add_argument("--targets", default=None, metavar="FILE",
+                   help="Batch mode: dosyadaki her satır için yeni session ile görev çalıştır")
+    p.add_argument("--savings-report", action="store_true",
+                   help="Tüm geçmiş session'lar için toplam savings raporu ve çık")
+    p.add_argument("--health", action="store_true",
+                   help="MCP server health check ve çık")
+    p.add_argument("--validate-config", action="store_true",
+                   help="Config.yaml şemasını doğrula ve çık")
+    p.add_argument("--prompt-cache", action="store_true",
+                   help="OpenRouter prompt caching (ephemeral) — %%50+ input token tasarrufu")
+    p.add_argument("--replay", default=None, metavar="SESSION_ID",
+                   help="Eski session'ın user mesajlarını yeni session'da tekrar oynat (regression test)")
     return p
 
 
+def _cmd_savings_report(console) -> int:
+    """Tüm geçmiş session'lar için toplam savings raporu."""
+    # Telemetry MCP server'dan değil, doğrudan telemetry SQLite DB'den oku
+    # (MCP başlatmak pahalı olur, ayrıca read-only).
+    import sqlite3
+    import os as _os
+    db_path = _os.path.expanduser(
+        _os.environ.get("HACKERAGENT_HOME", "~/.hackeragent")
+    ) + "/telemetry.db"
+    if not _os.path.isfile(db_path):
+        if console:
+            console.print("[yellow]Telemetry DB yok — henüz hiç session kaydedilmemiş.[/yellow]")
+        else:
+            print("Telemetry DB bulunamadı.")
+        return 1
+    try:
+        conn = sqlite3.connect(db_path)
+        cur = conn.cursor()
+        cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='savings_events'")
+        if not cur.fetchone():
+            if console:
+                console.print("[yellow]savings_events tablosu yok — henüz event yok.[/yellow]")
+            else:
+                print("savings_events tablosu yok.")
+            return 1
+        cur.execute("""
+            SELECT event_type, COUNT(*), SUM(cost_usd), SUM(saved_tokens), SUM(saved_usd)
+            FROM savings_events GROUP BY event_type
+        """)
+        rows = cur.fetchall()
+        cur.execute("SELECT COUNT(DISTINCT session_id), COUNT(*) FROM savings_events")
+        n_sessions, n_events = cur.fetchone()
+        conn.close()
+    except Exception as e:
+        if console:
+            console.print(f"[red]✗[/red] DB okunamadı: {e}")
+        else:
+            print(f"HATA: {e}")
+        return 1
+
+    if HAS_RICH and console:
+        console.print(f"\n[bold]💰 Agrega Savings Raporu[/bold]  "
+                      f"[dim]({n_sessions} session, {n_events} event)[/dim]")
+        t = Table(show_lines=False)
+        t.add_column("Event", style="cyan")
+        t.add_column("Count", justify="right")
+        t.add_column("Overhead ($)", justify="right", style="red")
+        t.add_column("Saved Tokens", justify="right", style="yellow")
+        t.add_column("Saved ($)", justify="right", style="green")
+        total_overhead = 0.0
+        total_saved = 0.0
+        for event_type, cnt, cost, tokens, saved in rows:
+            cost = cost or 0.0
+            saved = saved or 0.0
+            tokens = tokens or 0
+            total_overhead += cost
+            total_saved += saved
+            t.add_row(event_type, str(cnt), f"{cost:.4f}", f"{tokens:,}", f"{saved:.4f}")
+        console.print(t)
+        net = total_saved - total_overhead
+        sign = "+" if net >= 0 else ""
+        color = "green" if net >= 0 else "red"
+        console.print(
+            f"\n[bold]Net fayda:[/bold] [{color}]{sign}${net:.4f}[/{color}]  "
+            f"(overhead ${total_overhead:.4f}, tasarruf ${total_saved:.4f})"
+        )
+    else:
+        print(f"\nAgrega Savings Raporu ({n_sessions} session, {n_events} event):")
+        for event_type, cnt, cost, tokens, saved in rows:
+            print(f"  {event_type:15s} count={cnt:4} cost=${cost or 0:.4f} "
+                  f"saved_tokens={tokens or 0:,} saved=${saved or 0:.4f}")
+    return 0
+
+
+def _cmd_batch_targets(orch: Orchestrator, targets_file: str, base_task: str, console) -> int:
+    """Batch mode: dosyadaki her satır için yeni session'la görev çalıştır."""
+    import os as _os
+    if not _os.path.isfile(targets_file):
+        if console:
+            console.print(f"[red]✗[/red] Targets dosyası bulunamadı: {targets_file}")
+        return 1
+    targets = [ln.strip() for ln in open(targets_file, encoding="utf-8")
+               if ln.strip() and not ln.strip().startswith("#")]
+    if not targets:
+        if console:
+            console.print("[yellow]Targets dosyası boş.[/yellow]")
+        return 1
+
+    if console:
+        console.print(f"[bold]🎯 Batch mode:[/bold] {len(targets)} hedef işlenecek\n")
+
+    for i, target in enumerate(targets, 1):
+        if console:
+            console.print(f"\n[bold cyan]━━━ [{i}/{len(targets)}] {target} ━━━[/bold cyan]")
+        # Her hedef için yeni session
+        if i > 1:
+            orch.reset()
+        task = f"{base_task}\n\nHedef: {target}" if base_task else f"{target} için güvenlik taraması yap"
+        # Target'ı otomatik scope'a ekle (tek IP/domain ise)
+        orch.scope.add(target)
+        try:
+            _run_turn(orch, console, task)
+        except Exception as e:
+            report_crash("batch_target", extra={"target": target, "index": i}, exc=e)
+            if console:
+                console.print(f"[red]✗ {target}:[/red] {e}")
+            continue
+
+    if console:
+        console.print(f"\n[green]✓[/green] Batch tamamlandı: {len(targets)} hedef")
+    return 0
+
+
+def _install_signal_handlers(orch: Orchestrator, console) -> None:
+    """SIGINT/SIGTERM'de graceful shutdown — aktif session kaydedilir."""
+    def _handler(signum, _frame):
+        name = signal.Signals(signum).name
+        if console:
+            console.print(f"\n[yellow]⏸ {name} alındı, graceful shutdown...[/yellow]")
+        else:
+            print(f"\n{name} alındı, graceful shutdown...")
+        orch.cancel()
+        # İkinci SIGINT hard exit
+        signal.signal(signum, signal.SIG_DFL)
+
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        try:
+            signal.signal(sig, _handler)
+        except (ValueError, OSError):
+            pass  # main thread dışında çağrıldıysa
+
+
 def main(argv: list[str] | None = None) -> int:
+    install_excepthook()
     args = build_parser().parse_args(argv)
 
     cfg = get_config(args.config)
@@ -447,6 +665,8 @@ def main(argv: list[str] | None = None) -> int:
         cfg.data["safety"]["scope"] = list(existing) + list(args.scope)
     if args.no_stream:
         cfg.data.setdefault("llm", {})["streaming"] = False
+    if args.prompt_cache:
+        cfg.data.setdefault("llm", {})["prompt_cache_enabled"] = True
 
     setup_logging(
         level=args.log_level or cfg.get("logging.level", "INFO"),
@@ -454,10 +674,45 @@ def main(argv: list[str] | None = None) -> int:
     )
     console = Console(stderr=False) if HAS_RICH else None
 
-    # --list-sessions config/key gerektirmez
+    # 🔍 Config validation — her zaman; fatal varsa çıkış
+    errors, warnings = validate_config(cfg.data)
+    if args.validate_config:
+        txt = format_validation_result(errors, warnings)
+        if console:
+            color = "red" if errors else ("yellow" if warnings else "green")
+            console.print(f"[{color}]{txt}[/{color}]")
+        else:
+            print(txt)
+        return 1 if errors else 0
+    if errors:
+        msg = format_validation_result(errors, warnings)
+        if console:
+            console.print(f"[red]{msg}[/red]\n\n[dim]Fatal config hatası — düzeltip tekrar çalıştırın.[/dim]")
+        else:
+            print(msg, file=sys.stderr)
+        return 2
+    if warnings and console:
+        console.print(f"[yellow]{format_validation_result([], warnings)}[/yellow]\n")
+
+    # --list-sessions / --list-workflows / --savings-report config/key gerektirmez
     if args.list_sessions:
         _cmd_list_sessions(console)
         return 0
+    if args.list_workflows:
+        wfs = list_workflows()
+        if console:
+            if wfs:
+                console.print("[bold]Workflow'lar:[/bold]")
+                for w in wfs:
+                    console.print(f"  • {w}")
+            else:
+                console.print("[yellow]Workflow bulunamadı.[/yellow]")
+        else:
+            for w in wfs:
+                print(w)
+        return 0
+    if args.savings_report:
+        return _cmd_savings_report(console)
 
     if not cfg.openrouter_api_key:
         msg = (
@@ -468,7 +723,7 @@ def main(argv: list[str] | None = None) -> int:
             console.print(f"[red]✗[/red] {msg}")
         else:
             print(f"HATA: {msg}", file=sys.stderr)
-        if not args.list_tools:
+        if not args.list_tools and not args.health:
             return 2
 
     try:
@@ -484,8 +739,40 @@ def main(argv: list[str] | None = None) -> int:
                 orch.shutdown()
             return 0
 
+        if args.health:
+            import os as _os
+            _os.environ.setdefault("OPENROUTER_API_KEY", cfg.openrouter_api_key or "placeholder-for-health")
+            cfg.data.setdefault("llm", {})["openrouter_api_key"] = _os.environ["OPENROUTER_API_KEY"]
+            orch = Orchestrator(config=cfg)
+            try:
+                orch.start()
+                results = check_health(orch.mcp)
+                txt = format_health_report(results)
+                if console:
+                    unhealthy = sum(1 for r in results.values() if not r["healthy"])
+                    color = "red" if unhealthy else "green"
+                    console.print(f"[{color}]{txt}[/{color}]")
+                else:
+                    print(txt)
+                return 0 if all(r["healthy"] for r in results.values()) else 1
+            finally:
+                orch.shutdown()
+
         orch = Orchestrator(config=cfg)
         orch.progress = _progress_factory(console)
+        _install_signal_handlers(orch, console)
+
+        # --workflow? → orchestrator'a yükle
+        if args.workflow:
+            wf_prompt = load_workflow_prompt(args.workflow)
+            if wf_prompt is None:
+                if console:
+                    console.print(f"[red]✗[/red] Workflow bulunamadı: {args.workflow}")
+                    console.print(f"[dim]Mevcut:[/dim] {', '.join(list_workflows())}")
+                return 1
+            orch.workflow_prompt = wf_prompt
+            if console:
+                console.print(f"[green]✓[/green] Workflow yüklendi: [cyan]{args.workflow}[/cyan]")
 
         # Resume?
         if args.resume:
@@ -511,6 +798,38 @@ def main(argv: list[str] | None = None) -> int:
                 return 1
 
         try:
+            # Replay mode?
+            if args.replay:
+                from hackeragent.core.replay import extract_user_messages, replay_summary
+                try:
+                    orig = Session.load(args.replay)
+                except FileNotFoundError:
+                    if console:
+                        console.print(f"[red]✗[/red] Session bulunamadı: {args.replay}")
+                    return 1
+                if console:
+                    console.print(replay_summary(orig))
+                    console.print("\n[yellow]⚠ Replay başlatılıyor — LLM + MCP maliyeti olacak.[/yellow]\n")
+                users = extract_user_messages(orig)
+                if not users:
+                    if console:
+                        console.print("[yellow]Replay için user mesajı yok.[/yellow]")
+                    return 1
+                orch.start()
+                for i, msg in enumerate(users, 1):
+                    if console:
+                        console.print(f"\n[bold cyan]━━━ Replay [{i}/{len(users)}] ━━━[/bold cyan]")
+                        console.print(f"[dim]USER:[/dim] {msg[:200]}")
+                    _run_turn(orch, console, msg)
+                if console:
+                    console.print(f"\n[green]✓[/green] Replay tamamlandı ({len(users)} tur)")
+                    console.print("\n" + orch.cost_report())
+                return 0
+
+            # Batch mode?
+            if args.targets:
+                orch.start()
+                return _cmd_batch_targets(orch, args.targets, args.task or "", console)
             if args.task:
                 return _run_single(orch, args.task, console)
             return _run_repl(orch, console)
@@ -518,6 +837,14 @@ def main(argv: list[str] | None = None) -> int:
             orch.shutdown()
     except KeyboardInterrupt:
         return 130
+    except Exception as e:
+        report_crash("cli_main", exc=e)
+        if console:
+            console.print(f"[red]💥 Beklenmeyen hata:[/red] {e}")
+            console.print("[dim]Crash raporu yazıldı. `/crashes` ile inceleyebilirsiniz.[/dim]")
+        else:
+            print(f"HATA: {e}", file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":

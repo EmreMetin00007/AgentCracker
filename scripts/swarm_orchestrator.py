@@ -16,8 +16,6 @@ Kullanım:
 
 import os
 import json
-import time
-import asyncio
 from datetime import datetime
 from enum import Enum
 from dataclasses import dataclass, field

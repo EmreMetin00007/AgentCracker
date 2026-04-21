@@ -35,8 +35,10 @@ from hackeragent.core.budget import BudgetTracker
 from hackeragent.core.circuit_breaker import CircuitBreaker
 from hackeragent.core.compressor import Compressor
 from hackeragent.core.config import Config, get_config
+from hackeragent.core.crash_reporter import report_crash
 from hackeragent.core.llm_client import LLMClient, LLMReply
 from hackeragent.core.mcp_manager import MCPManager, tools_to_openai_schema
+from hackeragent.core.notifier import Notifier
 from hackeragent.core.parallel_exec import execute_tool_calls
 from hackeragent.core.planner import Plan, Planner
 from hackeragent.core.prompt_engine import build_system_prompt
@@ -73,6 +75,7 @@ class Orchestrator:
     planner: Planner = field(init=False)
     model_router: ModelRouter = field(init=False)
     stats: SessionStats = field(init=False)
+    notifier: Notifier = field(init=False)
     session: Session = field(init=False)
     tools_schema: list[dict] = field(default_factory=list)
     progress: ProgressCallback | None = None
@@ -84,9 +87,12 @@ class Orchestrator:
     planner_enabled: bool = True
     parallel_tools_enabled: bool = True
     vision_enabled: bool = True
+    prompt_cache_enabled: bool = False
     current_plan: Plan | None = None
+    workflow_prompt: str | None = None
     _started: bool = False
     _force_cheap_next: bool = False
+    _cancelled: bool = False
 
     def __post_init__(self) -> None:
         self.llm = LLMClient(
@@ -118,9 +124,20 @@ class Orchestrator:
         )
         # Akıllı model router — config'den tier'ları yükle
         tiers = ModelTiers.from_config(self.config.get("llm.models", {}) or {})
+        use_llm_classifier = bool(self.config.get("llm.router_llm_classifier", False))
+        llm_classifier = None
+        if use_llm_classifier:
+            from hackeragent.core.router import LLMTierClassifier
+            llm_classifier = LLMTierClassifier(
+                llm_client=self.llm,
+                cheap_model=tiers.cheap,
+                cache_ttl=int(self.config.get("llm.router_classifier_cache_ttl", 30)),
+            )
+            log.info("LLM-based router classifier AKTİF")
         self.model_router = ModelRouter(
             tiers=tiers,
             enabled=bool(self.config.get("llm.router_enabled", True)),
+            llm_classifier=llm_classifier,
         )
         # Compressor — eski bağlamı ucuz LLM ile özetler
         self.compressor = Compressor(
@@ -149,6 +166,10 @@ class Orchestrator:
         self.stats = SessionStats(session_id=self.session.id)
         # ToolCache'e hit callback bağla — cache hit event'i stats'e kaydedilir
         self.tool_cache.on_hit = self.stats.record_cache_hit
+        # 🔔 Webhook notifier (Discord/Slack/generic)
+        self.notifier = Notifier.from_config(self.config)
+        # 📦 OpenRouter prompt caching — system+tools stabil, %50+ tasarruf
+        self.prompt_cache_enabled = bool(self.config.get("llm.prompt_cache_enabled", False))
 
     # ─── Lifecycle ────────────────────────────────────────────────────────
     def start(self) -> None:
@@ -168,7 +189,11 @@ class Orchestrator:
         self.stats.attach_emitter(emitter)
         self.stats.session_id = self.session.id
         self.tools_schema = tools_to_openai_schema(self.mcp.list_tools())
-        self.session.messages = [{"role": "system", "content": build_system_prompt()}]
+        system_msgs: list[dict] = [{"role": "system", "content": build_system_prompt()}]
+        if self.workflow_prompt:
+            system_msgs.append({"role": "system", "content": self.workflow_prompt})
+            log.info("Workflow prompt eklendi (%d char)", len(self.workflow_prompt))
+        self.session.messages = system_msgs
         self.session.save()
         self._started = True
         self._emit("ready", {
@@ -318,6 +343,8 @@ class Orchestrator:
                 )
             self._emit("llm_call", {"iter": iteration + 1, "model": picked_model})
             try:
+                if self._cancelled:
+                    return "🛑 Kullanıcı tarafından iptal edildi."
                 if self.streaming_enabled:
                     reply = self._stream_once(model=picked_model)
                 else:
@@ -325,10 +352,16 @@ class Orchestrator:
                         messages=self.session.messages,
                         tools=self.tools_schema or None,
                         model=picked_model,
+                        prompt_cache=self.prompt_cache_enabled,
                     )
             except Exception as e:
                 # LLM hatası: session'ı temizle (son kullanıcı mesajı düşsün mü?)
                 # → Düşürmeyelim, kullanıcı --resume ile tekrar deneyebilsin.
+                report_crash("orchestrator_llm_call", extra={
+                    "session_id": self.session.id,
+                    "iteration": iteration,
+                    "model": picked_model,
+                }, exc=e)
                 return f"HATA: LLM çağrısı başarısız: {e}"
 
             # 1) ÖNCE session'a yaz — ödediğimiz yanıt kayıtlı olsun
@@ -452,6 +485,7 @@ class Orchestrator:
             messages=self.session.messages,
             tools=self.tools_schema or None,
             model=model,
+            prompt_cache=self.prompt_cache_enabled,
         ):
             if event["type"] == "delta":
                 if self.stream_callback:
@@ -462,6 +496,23 @@ class Orchestrator:
             elif event["type"] == "done":
                 final_reply = event["reply"]
         return final_reply
+
+    def cancel(self) -> None:
+        """Mevcut ask() turunu iptal için flag set et (SIGINT handler'dan çağrılır)."""
+        self._cancelled = True
+        log.warning("Cancel flag set — bir sonraki iterasyonda durulacak")
+
+    def clear_cancel(self) -> None:
+        self._cancelled = False
+
+    def notify_finding(
+        self, title: str, severity: str = "high", target: str = "", summary: str = ""
+    ) -> bool:
+        """Webhook notifier'a finding gönder (dedupe'lu)."""
+        return self.notifier.send_finding(
+            title=title, severity=severity, target=target,
+            summary=summary, session_id=self.session.id,
+        )
 
     # ─── Helpers ──────────────────────────────────────────────────────────
     def reset(self) -> None:

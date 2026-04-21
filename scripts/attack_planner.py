@@ -281,7 +281,7 @@ class AttackPathPlanner:
             report += f"  {'→'.join(bp['path'])}\n"
 
             if "recommended_sequence" in strategy:
-                report += f"\n  📝 Adım Adım Plan:\n"
+                report += "\n  📝 Adım Adım Plan:\n"
                 for i, cmd in enumerate(strategy["recommended_sequence"], 1):
                     report += f"    {i}. {cmd}\n"
 

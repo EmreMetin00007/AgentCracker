@@ -16,7 +16,6 @@ Kullanım:
 import sqlite3
 import os
 import json
-from datetime import datetime
 from mcp.server.fastmcp import FastMCP
 
 try:
@@ -855,19 +854,19 @@ def get_knowledge_graph_summary(target: str = "") -> str:
     output += f"Toplam ilişki: {summary['total_edges']}\n"
 
     if summary["nodes_by_type"]:
-        output += f"\nDüğüm Tipleri:\n"
+        output += "\nDüğüm Tipleri:\n"
         for ntype, count in sorted(summary["nodes_by_type"].items()):
             emoji = {"target": "🎯", "service": "⚙️", "software": "📦", "cve": "🐛",
                      "credential": "🔑", "finding": "💥", "privilege": "👑", "endpoint": "🌐"}.get(ntype, "📍")
             output += f"  {emoji} {ntype}: {count}\n"
 
     if summary["edges_by_relationship"]:
-        output += f"\nİlişki Tipleri:\n"
+        output += "\nİlişki Tipleri:\n"
         for rel, count in sorted(summary["edges_by_relationship"].items()):
             output += f"  → {rel}: {count}\n"
 
     if summary["targets"]:
-        output += f"\nKayıtlı Hedefler:\n"
+        output += "\nKayıtlı Hedefler:\n"
         for t in summary["targets"]:
             output += f"  🎯 {t}\n"
 

@@ -42,6 +42,44 @@ def _drop_tool(tools: list[dict], bad_name: str) -> list[dict]:
     return [t for t in tools if (t.get("function") or {}).get("name") != bad_name]
 
 
+def _apply_prompt_cache(messages: list[dict]) -> list[dict]:
+    """OpenRouter / Anthropic prompt caching hint'i ekle.
+
+    Stabil olan ilk system mesajını (ve varsa ikinci system mesajını) "ephemeral"
+    cache hint'i ile işaretler. OpenRouter bu hint'i destekleyen provider'lara
+    otomatik iletir (Anthropic, OpenAI o1+, Gemini cache API) → 5dk cache,
+    %50+ input token tasarrufu.
+
+    Format:
+      {"role": "system", "content": [
+         {"type": "text", "text": "...", "cache_control": {"type": "ephemeral"}}
+      ]}
+    """
+    if not messages:
+        return messages
+    out: list[dict] = []
+    marked = 0
+    for msg in messages:
+        # Sadece ilk iki system mesajını cache'le (stabil olanlar)
+        if marked < 2 and msg.get("role") == "system":
+            content = msg.get("content")
+            if isinstance(content, str) and content:
+                out.append({
+                    "role": "system",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": content,
+                            "cache_control": {"type": "ephemeral"},
+                        }
+                    ],
+                })
+                marked += 1
+                continue
+        out.append(msg)
+    return out
+
+
 @dataclass
 class LLMReply:
     """LLM yanıtının yapılandırılmış hali."""
@@ -97,11 +135,19 @@ class LLMClient:
         max_tokens: int | None = None,
         temperature: float | None = None,
         retries: int = 3,
+        prompt_cache: bool = False,
     ) -> LLMReply:
-        """Tek turlu chat completion. Tool kullanacaksa `tools` gönderin."""
+        """Tek turlu chat completion. Tool kullanacaksa `tools` gönderin.
+
+        prompt_cache=True iken system mesajına OpenRouter/Anthropic
+        `cache_control: ephemeral` işareti konur → 5dk cache (%50+ input
+        token tasarrufu). Sadece system prompt + tools schema stabilse
+        faydalıdır.
+        """
+        payload_messages = _apply_prompt_cache(messages) if prompt_cache else messages
         payload: dict[str, Any] = {
             "model": model or self.model,
-            "messages": messages,
+            "messages": payload_messages,
             "max_tokens": max_tokens or self.max_tokens,
             "temperature": self.temperature if temperature is None else temperature,
         }
@@ -210,6 +256,7 @@ class LLMClient:
         model: str | None = None,
         max_tokens: int | None = None,
         temperature: float | None = None,
+        prompt_cache: bool = False,
     ) -> Iterator[dict]:
         """Token-by-token streaming.
 
@@ -217,9 +264,10 @@ class LLMClient:
           {"type": "delta", "content": "...parça..."}          # yazılacak metin
           {"type": "done", "reply": LLMReply}                   # final LLMReply
         """
+        payload_messages = _apply_prompt_cache(messages) if prompt_cache else messages
         payload: dict[str, Any] = {
             "model": model or self.model,
-            "messages": messages,
+            "messages": payload_messages,
             "max_tokens": max_tokens or self.max_tokens,
             "temperature": self.temperature if temperature is None else temperature,
             "stream": True,

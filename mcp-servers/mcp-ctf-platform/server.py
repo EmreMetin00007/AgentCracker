@@ -15,7 +15,7 @@ Kullanım:
 import os
 import json
 import requests
-from typing import Optional
+from datetime import datetime, timezone
 from mcp.server.fastmcp import FastMCP
 
 mcp = FastMCP(
@@ -178,9 +178,9 @@ def ctfd_submit_flag(
         if data.get("success"):
             status = data.get("data", {}).get("status", "")
             if status == "correct":
-                return f"🎉 DOĞRU FLAG! Challenge çözüldü!"
+                return "🎉 DOĞRU FLAG! Challenge çözüldü!"
             elif status == "already_solved":
-                return f"✅ Bu challenge zaten çözülmüş."
+                return "✅ Bu challenge zaten çözülmüş."
             else:
                 return f"❌ Yanlış flag: {flag}"
         else:
@@ -241,7 +241,7 @@ def ctfd_download_files(
                 f.write(r.content)
             downloaded.append(filepath)
         
-        return f"İndirilen dosyalar:\n" + "\n".join(f"  - {f}" for f in downloaded)
+        return "İndirilen dosyalar:\n" + "\n".join(f"  - {f}" for f in downloaded)
     except Exception as e:
         return f"HATA: {str(e)}"
 
@@ -322,9 +322,9 @@ def htb_submit_flag(
         data = response.json()
         
         if data.get("success"):
-            return f"🎉 FLAG DOĞRU! Makine pwned!"
+            return "🎉 FLAG DOĞRU! Makine pwned!"
         else:
-            return f"❌ Yanlış flag veya makine."
+            return "❌ Yanlış flag veya makine."
     except Exception as e:
         return f"HATA: {str(e)}"
 
@@ -354,7 +354,7 @@ def ctf_decode(
         try:
             decoded = base64.b64decode(text).decode('utf-8', errors='replace')
             results.append(f"Base64: {decoded}")
-        except:
+        except Exception:
             if encoding == "base64":
                 results.append("Base64 decode başarısız")
     
@@ -362,7 +362,7 @@ def ctf_decode(
         try:
             decoded = base64.b32decode(text).decode('utf-8', errors='replace')
             results.append(f"Base32: {decoded}")
-        except:
+        except Exception:
             if encoding == "base32":
                 results.append("Base32 decode başarısız")
     
@@ -370,7 +370,7 @@ def ctf_decode(
         try:
             decoded = bytes.fromhex(text.replace(" ", "").replace("0x", "")).decode('utf-8', errors='replace')
             results.append(f"Hex: {decoded}")
-        except:
+        except Exception:
             if encoding == "hex":
                 results.append("Hex decode başarısız")
     
@@ -383,7 +383,7 @@ def ctf_decode(
             decoded = urllib.parse.unquote(text)
             if decoded != text:
                 results.append(f"URL: {decoded}")
-        except:
+        except Exception:
             pass
     
     if encoding == "auto" or encoding == "binary":
@@ -392,7 +392,7 @@ def ctf_decode(
             if all(c in '01' for c in bits) and len(bits) % 8 == 0:
                 decoded = ''.join(chr(int(bits[i:i+8], 2)) for i in range(0, len(bits), 8))
                 results.append(f"Binary: {decoded}")
-        except:
+        except Exception:
             pass
     
     if encoding == "auto" or encoding == "decimal":
@@ -401,7 +401,7 @@ def ctf_decode(
             if all(n.isdigit() and int(n) < 128 for n in nums):
                 decoded = ''.join(chr(int(n)) for n in nums)
                 results.append(f"Decimal: {decoded}")
-        except:
+        except Exception:
             pass
     
     return "\n".join(results) if results else "Decode edilemedi"
@@ -469,7 +469,6 @@ def bb_parse_scope(
         if platform == "hackerone":
             # HackerOne API (public program info)
             program_name = program_url.split("/")[-1] if "/" in program_url else program_url
-            api_url = f"https://hackerone.com/graphql"
             # Basit scope çekme (public API)
             resp = requests.get(
                 f"https://hackerone.com/{program_name}",
@@ -686,7 +685,7 @@ def ctf_auto_writeup(
 
 ---
 *Otomatik oluşturuldu — HackerAgent v2.0*
-*Tarih: {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}*
+*Tarih: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}*
 """
 
     # Dosyaya kaydet

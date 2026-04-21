@@ -9,7 +9,6 @@ from __future__ import annotations
 from pathlib import Path
 
 from hackeragent.core.config import (
-    REPO_ROOT,
     RULES_DIR,
     SKILLS_DIR,
     SYSTEM_PROMPT_PATH,

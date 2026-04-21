@@ -9,7 +9,6 @@ Kullanım:
 
 import sqlite3
 import os
-import json
 from datetime import datetime, timedelta
 from mcp.server.fastmcp import FastMCP
 
@@ -549,10 +548,11 @@ def get_savings_report(session_id: str = "") -> str:
             )
         comp = by_type.get("compression", {})
         if comp.get("count"):
-            pct = 100 * comp.get("saved_tokens", 0) / max(1, comp.get("saved_tokens", 0) + 40000)
+            saved = comp.get("saved_tokens", 0)
+            pct = 100 * saved / max(1, saved + 40000)
             output.append(
                 f"📦 Compression etki: {comp['count']} sıkıştırma, "
-                f"~{comp.get('saved_tokens', 0):,} token kurtarıldı"
+                f"~{saved:,} token kurtarıldı (~%{pct:.1f} context tasarrufu)"
             )
         pl = by_type.get("planner", {})
         if pl.get("count"):
