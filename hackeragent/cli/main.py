@@ -528,7 +528,7 @@ def _cmd_savings_report(console) -> int:
     import os as _os
     db_path = _os.path.expanduser(
         _os.environ.get("HACKERAGENT_HOME", "~/.hackeragent")
-    ) + "/telemetry.db"
+    ) + "/agent_telemetry.db"
     if not _os.path.isfile(db_path):
         if console:
             console.print("[yellow]Telemetry DB yok — henüz hiç session kaydedilmemiş.[/yellow]")
