@@ -141,6 +141,11 @@ DEFAULTS: dict[str, Any] = {
             "args": [str(MCP_SERVERS_DIR / "mcp-browser" / "server.py")],
             "enabled": False,  # playwright kurulumu gerektirir, opt-in
         },
+        "web-advanced": {
+            "command": "python3",
+            "args": [str(MCP_SERVERS_DIR / "mcp-web-advanced" / "server.py")],
+            "enabled": True,  # Modern Web + API (Paket 1+2)
+        },
     },
     "safety": {
         "require_approval": ["exploit", "lateral_movement", "flag_submit"],

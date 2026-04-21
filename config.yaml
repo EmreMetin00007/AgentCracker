@@ -108,6 +108,15 @@ mcp_servers:
     enabled: false
     command: "python3"
     args: ["mcp-servers/mcp-browser/server.py"]
+  # Modern Web Advanced + API saldırı araçları (Paket 1 + 2)
+  # GraphQL, JWT, OAuth/SAML, HTTP smuggling, cache poisoning, prototype
+  # pollution, race condition, WebSocket + OpenAPI/Postman ingest,
+  # API route fuzz, param discovery, NoSQLi, IDOR matrix, rate bypass,
+  # formula injection.
+  web-advanced:
+    enabled: true
+    command: "python3"
+    args: ["mcp-servers/mcp-web-advanced/server.py"]
 
 safety:
   # Bu operasyon tipleri için MCP kali-tools request_approval'ı zorunlu kılınır.

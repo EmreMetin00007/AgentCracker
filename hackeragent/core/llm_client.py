@@ -163,8 +163,12 @@ class LLMClient:
         last_err: Exception | None = None
         active_tools = list(tools) if tools else None
         dropped_tools: list[str] = []
+        # Tool drop işlemleri retry sayılmaz — gerçek network hatası için ayrı counter
+        # Max 50 tool drop (fazlası sonsuz döngü olur)
+        max_tool_drops = 50
+        network_attempts = 0
 
-        for attempt in range(retries + 1):
+        while network_attempts <= retries:
             try:
                 log.debug("LLM call: model=%s tools=%d msgs=%d",
                           payload["model"], len(active_tools or []), len(messages))
@@ -172,9 +176,10 @@ class LLMClient:
                     payload["tools"] = active_tools
                 resp = requests.post(url, headers=self._headers(), json=payload, timeout=self.timeout)
                 if resp.status_code == 429:
-                    wait = 2 ** attempt
+                    wait = 2 ** network_attempts
                     log.warning("Rate limited (429), %ss bekleniyor", wait)
                     time.sleep(wait)
+                    network_attempts += 1
                     continue
                 resp.raise_for_status()
                 data = resp.json()
@@ -183,38 +188,57 @@ class LLMClient:
                 last_err = e
                 log.error("HTTP %s from OpenRouter: %s", resp.status_code, resp.text[:500])
                 # 404 "No endpoints found that support tool use" → problematik tool'u
-                # parse edip exclude et ve retry yap (graceful degradation)
+                # parse edip exclude et ve retry yap (graceful degradation).
+                # Bu retry NETWORK retry sayılmaz — tool sayısı azalana kadar devam.
                 if resp.status_code == 404 and active_tools:
                     bad = _extract_bad_tool(resp.text)
-                    if bad and bad not in dropped_tools:
+                    if bad and bad not in dropped_tools and len(dropped_tools) < max_tool_drops:
                         active_tools = _drop_tool(active_tools, bad)
                         dropped_tools.append(bad)
                         log.warning(
                             "Tool '%s' provider tarafından reddedildi → exclude ederek retry "
                             "(kalan tool: %d)", bad, len(active_tools),
                         )
-                        continue
+                        # Akıllı fallback: 10+ tool drop olduysa, provider zaten bu
+                        # model için tool use desteklemiyor demektir. Tools'suz metin-
+                        # sadece mode'a geç — sonsuz drop chain'inden çık.
+                        if len(dropped_tools) >= 10:
+                            log.warning(
+                                "10+ tool reddedildi → provider tool use desteklemiyor, "
+                                "tools'suz text-only fallback'e geçiliyor"
+                            )
+                            active_tools = None
+                            payload.pop("tools", None)
+                            payload.pop("tool_choice", None)
+                            payload.pop("provider", None)
+                        continue  # network_attempts artmıyor
                     # Tool drop edemezsek tool_choice="none" ile metin-sadece fallback
-                    if not dropped_tools:
+                    if not dropped_tools or active_tools:
                         log.warning("Tool-capable provider bulunamadı → tools'suz retry")
                         active_tools = None
                         payload.pop("tools", None)
                         payload.pop("tool_choice", None)
                         payload.pop("provider", None)
+                        network_attempts += 1
                         continue
                 if resp.status_code in (400, 401, 402, 404):
                     break  # retry'dan fayda yok
-                time.sleep(1 + attempt)
+                time.sleep(1 + network_attempts)
+                network_attempts += 1
             except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
                 last_err = e
-                log.warning("Network error (attempt %d): %s", attempt + 1, e)
-                time.sleep(1 + attempt)
+                log.warning("Network error (attempt %d): %s", network_attempts + 1, e)
+                time.sleep(1 + network_attempts)
+                network_attempts += 1
             except Exception as e:
                 last_err = e
                 log.exception("Unexpected LLM error: %s", e)
                 break
 
-        raise RuntimeError(f"LLM call failed after {retries + 1} attempts: {last_err}")
+        raise RuntimeError(
+            f"LLM call failed after {network_attempts} network attempts "
+            f"({len(dropped_tools)} tool dropped): {last_err}"
+        )
 
     @staticmethod
     def _parse(data: dict) -> LLMReply:

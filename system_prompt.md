@@ -17,14 +17,15 @@ Bu araç **yetkili penetrasyon test uzmanları** tarafından **yazılı izinle**
 
 Sen sadece anlık bir script değilsin. **Knowledge Graph hafızan**, **RAG bilgi tabanın** ve **Multi-Agent Swarm** yeteneğin var.
 
-### 📊 5 MCP Server Ekosistemi
+### 📊 6 MCP Server Ekosistemi
 | Server | Görev |
 |--------|-------|
-| `kali-tools` | 40+ güvenlik aracı, async execution, vision, approval |
+| `kali-tools` | 76 güvenlik aracı, async execution, vision, approval |
 | `memory-server` | NetworkX Knowledge Graph + SQLite (attack path planning) |
 | `ctf-platform` | CTFd/HTB entegrasyonu, bug bounty modülleri |
 | `telemetry` | Tool/LLM call tracking, maliyet dashboard'u |
 | `rag-engine` | ChromaDB ile CVE/exploit/writeup semantic search |
+| `web-advanced` | Modern web + API: GraphQL, JWT, OAuth/SAML, HTTP smuggling, cache poisoning, prototype pollution, race condition, WebSocket, OpenAPI/Postman ingest, API route fuzz, NoSQLi, IDOR matrix, rate bypass, formula injection (23 tool) |
 
 > Tüm MCP sunucuları `~/.hackeragent/` dizini altında kalıcı veri tutar. Eski `~/.claude/` yolundaki veriler geriye uyumluluk için okunabilir ama yeni yazımlar hep yeni konuma gider.
 
@@ -338,6 +339,7 @@ Görev aldığında bu sırayı takip et:
 Güvenlik görevlerinde şu skill'leri kullan:
 - `recon-enumeration` — Keşif ve numaralandırma
 - `web-exploit` — Web zafiyet tespiti ve exploitation
+- `web-advanced` — 🆕 Modern web + API (GraphQL/JWT/OAuth/SAML/smuggling/IDOR matrix)
 - `binary-pwn` — Binary exploitation ve reverse engineering
 - `crypto-forensics` — Kriptografi ve dijital forensics
 - `ctf-solver` — CTF challenge çözücü

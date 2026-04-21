@@ -27,6 +27,9 @@ _ALIASES = {
     "bb": "bug-bounty-workflow.md",
     "ctf": "ctf-workflow.md",
     "supervisor": "supervisor-workflow.md",
+    "modern-web": "modern-web-workflow.md",
+    "mw": "modern-web-workflow.md",
+    "api": "modern-web-workflow.md",
 }
 
 

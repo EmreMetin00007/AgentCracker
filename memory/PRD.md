@@ -350,3 +350,76 @@ Kullanıcı isteği: A (kararlılık) + B (özellikler) + C (maliyet) + F (sağl
 - P2: HackerOne/Bugcrowd direkt submit
 - P3: PDF/HTML rapor export
 - P3: Tool output redaction (PII maskeleme)
+
+---
+
+## Faz-F: Modern Web + API Saldırı Paketleri (2026-04-21)
+
+Kullanıcı isteği: "projeyi daha fazla genişletemezmiyiz sadece belirli web açıklarını buluyor"
+→ Paket 1 (Modern Web Advanced) + Paket 2 (API & Modern Endpoint) onaylandı.
+
+### Yeni MCP Server: `mcp-web-advanced` (23 tool)
+
+**Paket 1 — Modern Web Advanced (15 tool):**
+- GraphQL: `graphql_introspect`, `graphql_suggestion_scan`, `graphql_batch_attack`
+- JWT: `jwt_analyze`, `jwt_attack_alg_none`, `jwt_brute_hs256`, `jwt_rs_to_hs_confusion`
+- OAuth/SAML: `oauth_redirect_bypass` (15 varyant), `saml_xsw_variants` (XSW1-8 rehberi)
+- HTTP Smuggling: `http_smuggling_probe` (CL.TE/TE.CL/TE.TE + h2c timing-based)
+- Cache & CORS: `cache_poisoning_probe`, `cors_advanced_scan` (9 senaryo)
+- Prototype Pollution: `prototype_pollution_scan`
+- Race Condition: `race_condition_test` (threading.Barrier ile sync)
+- WebSocket: `websocket_handshake_test` (CSWSH detection)
+
+**Paket 2 — API & Modern Endpoint (8 tool):**
+- Ingest: `openapi_ingest` (Swagger/OpenAPI YAML+JSON), `postman_ingest` (v2)
+- Discovery: `api_route_fuzz` (built-in ~65 route wordlist), `api_param_discover` (Arjun-style)
+- NoSQLi: `nosqli_mongo_test` ($ne/$gt/$regex/$where)
+- IDOR: `api_idor_matrix` (multi-token × multi-ID matrix)
+- Bypass: `api_rate_bypass_probe` (9 varyant — IP spoofing + path obfuscation)
+- Output: `formula_injection_payloads` (CSV/Excel RCE + exfil)
+
+### Mimari
+- Python-native implementasyon (external binary minimum, sadece requests + pycryptodome)
+- Raw socket HTTP smuggling probe (sıkı TE/CL fuzzing için gerekli)
+- Threading.Barrier ile gerçek race condition simülasyonu
+- Skill: `skills/web-advanced/SKILL.md` — 23 tool kategorize edilmiş
+- Workflow: `workflows/modern-web-workflow.md` — 9 faz adım adım pipeline
+- Alias: `--workflow modern-web | mw | api`
+
+### Bonus: LLM Client Akıllı Fallback
+`llm_client.py`'da kritik iyileştirme — Qwen provider'ı çok sayıda tool'u
+reddettiğinde sonsuz drop chain yerine:
+- Tool drop işlemleri NETWORK retry sayılmıyor (ayrı counter)
+- 10+ tool drop → otomatik tools'suz text-only fallback (crash yok)
+- `max_tool_drops = 50` güvenlik tavanı
+- Canlı test: 116 tool'dan 95+'i reddedilse bile session başarıyla tamamlanıyor
+
+### Dosya değişiklikleri
+**Yeni:**
+- `mcp-servers/mcp-web-advanced/server.py` (~900 LOC, 23 MCP tool)
+- `mcp-servers/mcp-web-advanced/requirements.txt`
+- `skills/web-advanced/SKILL.md`
+- `workflows/modern-web-workflow.md`
+- `hackeragent/tests/test_web_advanced.py` (23 test)
+
+**Güncellenen:**
+- `hackeragent/core/config.py` — DEFAULTS'a web-advanced eklendi
+- `config.yaml` — yeni MCP server kaydı
+- `hackeragent/core/workflow_launcher.py` — 3 yeni alias (modern-web/mw/api)
+- `hackeragent/core/llm_client.py` — smart tool-drop fallback
+- `system_prompt.md` — MCP ekosistemi tablosu güncellendi (5→6 server), skill listesi
+
+### Test Sonuçları (Faz-F)
+- **179/179 pytest PASSED** (Faz-E 156 + Faz-F 23 yeni)
+- Ruff clean (tüm server'lar)
+- Canlı MCP: 6/6 server sağlıklı, **139 tool toplam** (önce 116 → +23)
+- Canlı LLM E2E: JWT analiz görevi + smart fallback tamamlandı ($0.02)
+
+### Backlog (Faz-G için)
+- Paket 3 (Cloud & Container): AWS/Azure/GCP/K8s/Docker
+- Paket 4 (Active Directory): BloodHound, Kerberos, ADCS, NTLM relay
+- Paket 5 (Binary advanced): angr, qiling, afl++, Ghidra headless
+- Paket 6 (OSINT 2.0): Shodan/Censys/ZoomEye, trufflehog, waybackurls+gau
+- Exploit-AI: bulgudan reusable nuclei template auto-gen
+- Chain-PoC: KG'den multi-step attack chain otomatik PoC
+- Live monitor mode: `--monitor <domain>` webhook push
