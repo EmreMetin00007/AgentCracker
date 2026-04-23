@@ -1,3 +1,8 @@
+---
+name: web-advanced
+description: "Modern web ve API saldırı skill'i. GraphQL injection, JWT attacks, OAuth/OIDC/SAML misconfiguration, HTTP Request Smuggling (CL.TE/TE.CL/TE.TE), Web Cache Poisoning, Prototype Pollution, Race Condition/TOCTOU, WebSocket fuzzing, NoSQL Injection, IDOR matrix, Rate Limiting bypass, Formula Injection, API route fuzzing, OpenAPI/Postman ingest. Bu skill'i şu durumlarda kullan: kullanıcı 'GraphQL', 'JWT', 'OAuth', 'SAML', 'OIDC', 'smuggling', 'cache poisoning', 'prototype pollution', 'race condition', 'WebSocket', 'NoSQL', 'IDOR', 'rate limit bypass', 'API test', 'OpenAPI', 'Postman', 'formula injection', 'modern SPA', 'React/Vue/Angular' dediğinde veya modern bir web/API uygulamasının güvenlik testi istendiğinde. Özellikle klasik `kali-tools`'un yetmediği API-first uygulamalarında mutlaka bu skill'i kullan — `web-advanced` MCP server'ı üzerinden 23 özel tool çağır."
+---
+
 # 🕸️ Modern Web + API Saldırı Skill'i
 
 Modern web / API odaklı bug bounty avı için `web-advanced` MCP server'ını

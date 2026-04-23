@@ -83,6 +83,67 @@ OpenRouter mimarisine migrasyonu. Hedef: silinen 4.300+ satır Python kod, korun
     `qwen/qwen3.6-plus` ile istek gitti, **CVE-2021-41773 doğru tespit edildi**
   - ✅ `ruff check` — All checks passed
 
+### 2026-01-23 — CLAUDE.md v3 (Gerçek Deneyime Göre Revizyon)
+
+Gerçek session'larda yapılan 5 e2e test sonucu **4 kritik davranış bulgusu**
+ortaya çıktı ve CLAUDE.md v3'e yansıtıldı:
+
+**Bulgu 1:** `@skills/...` referansları **auto-load ETMEZ** — model sadece
+"okumam gerek" diye bahseder, Read tool çağırmaz. → Çözüm: CLAUDE.md'den tüm
+`@skills/` referansları kaldırıldı, yerine **3 tetikleme yolu** net yazıldı:
+  1. `Skill({"skill": "web-exploit"})` — native Claude Code tool, model'den çağrılır
+  2. `/web-exploit` — kullanıcı prompt'unun ilk satırında (model yazınca metin olur)
+  3. `Read(file_path="/app/.claude/skills/<name>/SKILL.md")` — fallback
+
+**Bulgu 2:** Skills **yanlış konumdaydı** (`/app/skills/`). Claude Code native
+Skills mekanizması `~/.claude/skills/` veya `.claude/skills/` altında arar.
+→ Çözüm:
+  - `/app/skills/` → `/app/.claude/skills/` taşındı (backward-compat symlink ile)
+  - `~/.claude/skills/<name>` → `/app/.claude/skills/<name>` symlink'leri oluşturuldu
+  - `install-cco.sh`'a otomatik symlink creation eklendi (PHASE 3)
+  - Sonuç: `claude -p "/tools"` sorgusunda 7 skill slash command göründü
+    (`/recon-enumeration`, `/web-exploit`, `/web-advanced`, `/binary-pwn`,
+    `/crypto-forensics`, `/ctf-solver`, `/report-generator`)
+
+**Bulgu 3:** `skills/web-advanced/SKILL.md` dosyasında **YAML frontmatter eksik**
+idi (diğer 6 skill'de vardı). → Çözüm: name/description frontmatter eklendi,
+Anthropic Agent Skills format uyumu sağlandı.
+
+**Bulgu 4:** Model tool-use davranışı **orchestrator modele göre değişiyor**:
+  - `meta-llama/llama-3.3-70b-instruct` → `Skill` tool'unu düzgün çağırır ✅
+  - `qwen/qwen3-next-80b-a3b-instruct` → bazen `Skill({"skill":"..."})` metin
+    olarak yazar, tool_use oluşturmaz ⚠️
+  → Çözüm: CLAUDE.md'ye "Kullanıcı Workflow Önerisi" bölümü eklendi —
+    kullanıcının slash command kullanması, orchestrator modelden bağımsız
+    **garantili yol** olarak tanıtıldı. `.env`'de model değiştirme örnekleri
+    eklendi.
+
+**Bulgu 5:** Minimum prompt'ta model **memory'e kayıt yapmıyordu**. →
+Çözüm: CLAUDE.md başına **"MUTLAK KURALLAR"** bölümü eklendi:
+  - Kural 1: İlk aktif tool çağrısından ÖNCE Skill tetikle
+  - Kural 2: Her tool sonucundan sonra `store_finding/credential/endpoint`
+  - Kural 3: Scope enforcement
+  - Kural 4: Model delegation (session model sabit, MCP tool delegation)
+
+**Ek değişiklikler:**
+- CLAUDE.md 12.6KB → 16.5KB (kural netliği için kabul edilebilir artış)
+- `@rules/` ve `@workflows/` referansları inline hale getirildi
+- "Çalışmayan Kalıplar" tablosu genişletildi (9 pattern)
+- Gerçek session test sonuçlarına göre "kullanıcı workflow önerileri" eklendi
+- `install-cco.sh` PHASE 3'e skills symlink bootstrap eklendi
+
+### E2E Test Matrisi (2026-01-23)
+
+| Test | Model | Durum | Bulgu |
+|------|-------|-------|-------|
+| `Skill(skill="web-exploit")` tool call | llama-3.3-70b | ✅ doğru tool_use | Llama tool use güvenilir |
+| Aynı test | qwen3-next-80b | ⚠️ metin olarak yazıldı | Qwen tool use tutarsız |
+| `/web-exploit` slash (user prompt) | her ikisi de | ✅ skill launch | **EN GÜVENİLİR YOL** |
+| `Read(/app/.claude/skills/.../SKILL.md)` | her ikisi de | ✅ dosya okundu | Fallback çalışıyor |
+| `store_finding` otomatik çağrı | qwen3-next-80b | ✅ memory kaydedildi | MUTLAK KURAL'a uyuldu |
+| `mcp__kali-tools__nuclei_scan` | her ikisi de | ✅ tool çağrıldı, nuclei yok (container) | Gerçek Kali'de çalışacak |
+| `qwen_analyze` → OpenRouter | tool içi qwen3.6-plus | ✅ CVE-2021-41773 tespit | Model delegation OK |
+
 ## Architecture Decisions
 
 ### OpenRouter Claude Code compat (Jan 2026)

@@ -38,13 +38,19 @@ source .env
 claude
 ```
 
-İlk komutlar:
+İlk komutlar (slash command'la başlamak en garantili yol):
 ```
-/tools                          # Tüm MCP araçlarını listele
-/health                         # MCP server sağlık kontrolü
-> 10.10.10.10 hedefini tara     # Görev ver
-> TryHackMe'de bir CTF makinesindeyim, Recon fazından başla
+> /tools                                         # Tüm MCP araçlarını listele
+> /recon-enumeration scanme.nmap.org             # Keşif skill'ini tetikle
+> /web-exploit testphp.vulnweb.com/?test=query   # Web zafiyet skill'i
+> /ctf-solver picoCTF Binary Exploitation        # CTF orkestratör
+> 10.10.10.10 hedefini tara                      # Doğal dil de çalışır
 ```
+
+**Neden slash command önerilir?** Gerçek testlerde model tool-use davranışı
+orkestrator modele göre değişiyor (Llama 3.3 70B `Skill` tool'unu düzgün çağırıyor,
+Qwen3-next-80b bazen sadece metin yazıyor). Slash command Claude Code tarafında
+handle edilir ve modelden bağımsız olarak her zaman skill'i tetikler.
 
 ---
 
@@ -121,14 +127,17 @@ cco/
 │   ├── mcp-telemetry/           ← Maliyet + call tracking
 │   └── mcp-browser/             ← Playwright (opsiyonel)
 │
-├── skills/                      ← 7 güvenlik skill'i
-│   ├── recon-enumeration/SKILL.md
-│   ├── web-exploit/SKILL.md
-│   ├── web-advanced/SKILL.md
-│   ├── binary-pwn/SKILL.md
-│   ├── crypto-forensics/SKILL.md
-│   ├── ctf-solver/SKILL.md
-│   └── report-generator/SKILL.md
+├── .claude/                     ← Claude Code native konfigürasyon
+│   └── skills/                  ← 7 Agent Skill (YAML frontmatter ile)
+│       ├── recon-enumeration/SKILL.md
+│       ├── web-exploit/SKILL.md
+│       ├── web-advanced/SKILL.md
+│       ├── binary-pwn/SKILL.md
+│       ├── crypto-forensics/SKILL.md
+│       ├── ctf-solver/SKILL.md
+│       └── report-generator/SKILL.md
+│
+├── skills → .claude/skills      ← Geriye uyumluluk için symlink
 │
 ├── workflows/                   ← Metodoloji dokümanları
 │   ├── bug-bounty-workflow.md

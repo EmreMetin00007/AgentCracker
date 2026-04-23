@@ -122,6 +122,27 @@ if [ "$EUID" -eq 0 ] && [ "$REAL_USER" != "root" ]; then
 fi
 echo -e "${G}  ✓ $CCO_DATA_DIR hazır${N}"
 
+# ── Skills → ~/.claude/skills symlinks (Agent Skills discovery) ──
+# Claude Code, ~/.claude/skills/<name>/SKILL.md dosyalarını otomatik
+# bulur ve /<name> slash command olarak sunar. CCO skill'leri
+# repo içinde /.claude/skills/ altında tutulur; buradan symlink ile
+# global skill havuzuna bağlanır.
+echo -e "${C}  → Skills global skill havuzuna bağlanıyor...${N}"
+mkdir -p "$REAL_HOME/.claude/skills"
+for skill_dir in "$CCO_DIR/.claude/skills/"*/; do
+  [ -d "$skill_dir" ] || continue
+  name=$(basename "$skill_dir")
+  target="$REAL_HOME/.claude/skills/$name"
+  if [ ! -e "$target" ]; then
+    ln -sfn "$skill_dir" "$target" 2>/dev/null && echo -e "${G}    ✓ /$name${N}"
+  else
+    echo -e "${Y}    ⚠ /$name zaten var (atlanıyor)${N}"
+  fi
+done
+if [ "$EUID" -eq 0 ] && [ "$REAL_USER" != "root" ]; then
+  chown -R "$REAL_USER:$REAL_USER" "$REAL_HOME/.claude/skills"
+fi
+
 # ═══════════════════════════════════════════════════════════════
 # 4. CLAUDE CODE CLI
 # ═══════════════════════════════════════════════════════════════
