@@ -24,9 +24,9 @@ try:
 except ImportError:
     HAS_NETWORKX = False
 
-# Veritabanı dosya yolu (geriye uyumluluk: HACKERAGENT_HOME env var > ~/.hackeragent)
-HACKERAGENT_HOME = os.environ.get("HACKERAGENT_HOME", os.path.expanduser("~/.hackeragent"))
-DB_PATH = os.path.join(HACKERAGENT_HOME, "agent_memory.db")
+# Veritabanı dosya yolu (CCO_HOME env var > ~/.cco)
+CCO_HOME = os.environ.get("CCO_HOME", os.path.expanduser("~/.cco"))
+DB_PATH = os.path.join(CCO_HOME, "agent_memory.db")
 
 # Server oluştur
 mcp = FastMCP(

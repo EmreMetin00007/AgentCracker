@@ -1,44 +1,50 @@
-# 🔴 HackerAgent v3.1
+# 🔴 CCO — Claude Code Offensive Operator
 
-**Otonom Bug Bounty Avcısı & CTF Çözücü — Claude Code CLI'dan Bağımsız**
+> Otonom bug bounty avcısı & CTF çözücü. **Claude Code CLI** orkestrasyonu,
+> **OpenRouter** üzerinden ucuz/sansürsüz modeller, **6 MCP server** ile 139+
+> güvenlik aracı. Kali Linux için.
 
-HackerAgent, OpenRouter (Qwen 3.6 Plus + Hermes 405B) üzerinde çalışan kendi
-orkestratörüne sahip bağımsız bir güvenlik platformudur. MCP (Model Context
-Protocol) mimarisini koruyarak Kali Linux güvenlik araçlarına, knowledge
-graph hafızasına, RAG bilgi tabanına ve telemetriye tek bir CLI üzerinden
-erişir. Kill Chain metodolojisi, OODA Loop karar döngüsü ve 200+ zafiyet tipi
-ile donatılmıştır.
+**v3.1 HackerAgent → v2.0 CCO geçişi:** 4.327 satır Python orkestrasyon kodu
+silindi; tüm orkestrasyon Claude Code'a bırakıldı. Sadece MCP tool'lar, skills,
+workflows ve rules kaldı.
 
-> **v3.0 → v3.1 değişikliği:** Faz-E yenilikleri eklendi:
-> - ✅ **Kararlılık**: config validator, health check, crash reporter, graceful shutdown
-> - ✅ **Yeni özellikler**: `--workflow`, `--targets` (batch), `--savings-report`, webhook notifier
-> - ✅ **Maliyet**: OpenRouter prompt caching, LLM-based tier classifier, session replay
-> - ✅ **CI**: GitHub Actions — lint + test + audit
-> - 156 unit test (+%53), tüm ruff uyarıları temiz
+---
 
 ## ⚡ Tek Komutla Kurulum
 
 ```bash
-# 1. Kali Linux'ta repoyu klonla
-git clone https://github.com/KULLANICI/HackerAgent.git
-cd HackerAgent
-
-# 2. Kurulum scriptini çalıştır
-chmod +x install.sh
-sudo ./install.sh
-# (Kurulum sırasında OpenRouter API key'iniz sorulacak)
-
-# 3. Orkestratörü başlat
-hackeragent
+git clone https://github.com/EmreMetin00007/AgentCracker.git cco
+cd cco
+chmod +x install-cco.sh
+./install-cco.sh
+# Kurulum sırasında OpenRouter API key'iniz sorulur
 ```
 
-`install.sh` şunları yapar:
-- ✅ Kali güvenlik araçlarını kurar (nmap, sqlmap, ffuf, nuclei, hashcat, john, gdb, binwalk, ...)
-- ✅ Python bağımlılıklarını ve `hackeragent` paketini kurar (`pip install -e .`)
-- ✅ Wordlist'leri hazırlar (rockyou.txt, seclists)
-- ✅ `~/.hackeragent/` veri dizinini oluşturur (DB, RAG, loglar, approvals)
-- ✅ OpenRouter API key'i `.env` dosyasına kaydeder
-- ✅ GDB eklentilerini (GEF) ve Ruby gem'lerini kurar
+`install-cco.sh` şunları yapar:
+- ✅ Kali güvenlik araçları (nmap, sqlmap, ffuf, nuclei, hashcat, john, ...)
+- ✅ Python MCP bağımlılıkları (mcp, chromadb, networkx, ...)
+- ✅ Claude Code CLI kurulumu (npm -g @anthropic-ai/claude-code)
+- ✅ `~/.cco/` veri dizini (DB, loglar, RAG, approvals)
+- ✅ `.env` dosyası (OpenRouter yönlendirmesi)
+- ✅ `~/.claude.json` — 6 MCP server kaydı (mevcut dosya yedeklenir)
+
+---
+
+## 🏁 Başlatma
+
+```bash
+cd /path/to/cco
+source .env
+claude
+```
+
+İlk komutlar:
+```
+/tools                          # Tüm MCP araçlarını listele
+/health                         # MCP server sağlık kontrolü
+> 10.10.10.10 hedefini tara     # Görev ver
+> TryHackMe'de bir CTF makinesindeyim, Recon fazından başla
+```
 
 ---
 
@@ -46,239 +52,169 @@ hackeragent
 
 ```
 ┌─────────────────────────────────────────────┐
-│   hackeragent CLI (Rich tabanlı REPL)       │
-│   Kullanıcı: "example.com'u tara"           │
-└───────────────────┬─────────────────────────┘
-                    │
-        ┌───────────▼────────────┐
-        │   Orchestrator (OODA)  │  ← system_prompt.md + rules/ + skills/
-        └───┬────────────────┬───┘
-            │                │
- ┌──────────▼──┐      ┌──────▼──────────┐
- │ LLMClient   │      │ MCPManager      │
- │ OpenRouter  │      │ (stdio sürücü)  │
- │ Qwen/Hermes │      └──────┬──────────┘
- └─────────────┘             │
-                   ┌─────────┼─────────┬────────────┬──────────┐
-                   │         │         │            │          │
-              kali-tools  memory  ctf-platform  telemetry  rag-engine
-              (MCP)       server   (MCP)        (MCP)      (MCP)
+│         Kullanıcı (Kali Terminal)           │
+│         source .env && claude               │
+└──────────────────┬──────────────────────────┘
+                   │
+┌──────────────────▼──────────────────────────┐
+│         Claude Code CLI                     │
+│  • Orkestrasyon, OODA loop, tool routing    │
+│  • CLAUDE.md → hacker persona + metodoloji  │
+│  • ~/.claude.json → 6 MCP server kaydı      │
+└──────┬──────────────┬───────────────────────┘
+       │              │
+       ▼              ▼
+┌────────────┐  ┌─────────────────────────────────┐
+│ OpenRouter │  │         MCP Server'lar          │
+│   API      │  │  ┌──────────────────────────┐   │
+│            │  │  │ mcp-kali-tools  (76 tool) │   │
+│ Session:   │  │  │ mcp-memory-server        │   │
+│ qwen3-next │  │  │ mcp-ctf-platform         │   │
+│ 80b-a3b    │  │  │ mcp-web-advanced (23 tool)│   │
+│            │  │  │ mcp-rag-engine            │   │
+│ Tool içi:  │  │  │ mcp-telemetry             │   │
+│ qwen3.6+,  │  │  └──────────────────────────┘   │
+│ hermes-405 │  └─────────────────────────────────┘
+└────────────┘
 ```
 
-### 🧠 Hacker Persona (`system_prompt.md`)
-- **Kill Chain** metodolojisi (Recon → Exploit → Post-Exploit → Report)
-- **OODA Loop** karar döngüsü
-- Tüm güvenlik disiplinleri için detaylı prosedürler
+### Model Routing
 
-### ⚡ 6 Güvenlik Skill'i
+> ⚠️ Claude Code runtime'da modeli ANLIK değiştiremez — tek session = tek model.
+> Model routing MCP tool katmanında çözüldü.
 
-| Skill | Kapsam |
-|-------|--------|
-| `recon-enumeration` | Nmap, subdomain, OSINT, port scan, DNS, dizin keşfi |
-| `web-exploit` | SQLi, XSS, SSRF, SSTI, LFI, CMDi, file upload, deserialization |
-| `binary-pwn` | Buffer overflow, ROP, format string, heap, pwntools, GDB |
-| `crypto-forensics` | RSA/AES saldırıları, hash cracking, steganografi, Volatility, PCAP |
-| `ctf-solver` | Ana orkestratör — kategori tanımlama, iteratif çözüm |
-| `report-generator` | HackerOne rapor formatı, CVSS hesaplama, düzeltme önerileri |
+- **Orkestratör** (session): `qwen/qwen3-next-80b-a3b-instruct` (non-thinking,
+  tool use uyumlu, `ANTHROPIC_DEFAULT_SONNET_MODEL`)
+- **Derin analiz:** Claude Code `qwen_analyze()` çağırır → tool içi kod
+  OpenRouter'a `qwen/qwen3.6-plus` ile ayrı istek atar
+- **Exploit PoC:** Claude Code `generate_exploit_poc()` çağırır → tool içi kod
+  `nousresearch/hermes-4-405b`'e istek atar
+- **Paralel analiz + PoC:** `parallel_llm_analyze()` — ThreadPoolExecutor ile
+  Qwen ve Hermes eş zamanlı
 
-### ⚙️ 5 MCP Server
-
-| Server | Araçlar |
-|--------|---------|
-| `kali-tools` | 40+ araç: nmap, ffuf, sqlmap, nikto, nuclei, hydra, hashcat, john, volatility, qwen_analyze, generate_exploit_poc, ... |
-| `ctf-platform` | CTFd, HackTheBox, TryHackMe API + decode/hash yardımcıları |
-| `memory-server` | NetworkX Knowledge Graph + SQLite (attack path planning) |
-| `telemetry` | Tool/LLM call tracking, maliyet dashboard'u |
-| `rag-engine` | ChromaDB ile CVE/exploit/writeup semantic search |
-
-### 🧬 Hibrit LLM Mimarisi
-
-| Model | Rol | Nasıl Tetiklenir |
-|-------|-----|------------------|
-| **Qwen 3.6 Plus** | Orkestratör + analiz | Her zaman aktif (default) |
-| **Hermes 4 405B** | PoC exploit üretici | `generate_exploit_poc`, `parallel_llm_analyze` |
-
----
-
-## 🎯 Kullanım Örnekleri
-
-```bash
-# Sağlık kontrolü & validation
-hackeragent --validate-config    # config.yaml şemasını doğrula
-hackeragent --health             # 5 MCP server health-check
-hackeragent --list-workflows     # bug-bounty / ctf / supervisor
-
-# Workflow launcher — hazır metodoloji ile başlat
-hackeragent --workflow bug-bounty --task "example.com için bounty avı"
-hackeragent --workflow ctf --task "picoCTF Binary Exploitation"
-
-# Batch multi-target mode
-hackeragent --targets targets.txt --task "Her hedef için full recon"
-
-# Agrega savings raporu (tüm sessionların toplamı)
-hackeragent --savings-report
-
-# Maliyet optimizasyonu
-hackeragent --prompt-cache       # OpenRouter ephemeral cache (~%50 input tasarruf)
-hackeragent --replay <session-id> # Eski session'u yeni promptlarla regression test
+Tüm modeller `.env` üzerinden override edilebilir:
 ```
-
-```bash
-# İnteraktif REPL (streaming varsayılan aktif)
-hackeragent
-
-# REPL içinde:
-> 10.10.10.10 hedefini tara ve zafiyetleri bul
-> example.com üzerinde kapsamlı güvenlik testi yap
-> Bu binary dosyasını analiz et ve exploit yaz
-> Bulduğum SQL injection için HackerOne raporu yaz
-
-# REPL slash komutları:
-/tools                 # Aktif MCP araçlarını listele
-/sessions              # Geçmiş session'ları göster
-/budget                # Mevcut maliyet özeti
-/scope list            # Aktif scope'u göster
-/scope add 10.10.10.5  # Scope'a host/IP/CIDR ekle
-/scope rm example.com  # Scope'tan kaldır
-/scope clear           # Scope'u sıfırla
-/cache                 # Tool cache istatistikleri
-/cache clear           # Tool cache'i temizle
-/plan                  # Aktif görev planını göster
-/report                # 💰 Cost-aware session raporu
-/health                # 🏥 MCP server health-check
-/crashes               # Son crash raporlarını göster
-/notify test           # Webhook notifier test bildirimi
-/cancel                # Mevcut görev turunu iptal et
-/help                  # Tüm komutlar
-/exit                  # Çık
+CCO_ANALYZE_MODEL=...
+CCO_EXPLOIT_MODEL=...
+CCO_FAST_MODEL=...
+CCO_CODE_MODEL=...
 ```
-
-```bash
-# Tek görev (REPL açmadan, streaming ile)
-hackeragent --task "10.10.10.10 portlarını tara" --scope 10.10.10.0/24
-
-# Bütçe limiti — $5 aşılırsa session durur
-hackeragent --budget 5.00
-
-# Streaming kapat (yavaş terminal için)
-hackeragent --no-stream
-
-# Session resume
-hackeragent --resume last           # Son session'a devam
-hackeragent --resume 20260420-...   # Belirli session ID
-hackeragent --list-sessions         # Tüm session'ları listele
-
-# Sadece araçları listele
-hackeragent --list-tools
-
-# Özel config + debug log
-hackeragent --config my-config.yaml --log-level DEBUG
-```
-
-### 🛡️ Güvenlik Özellikleri (Phase A)
-
-| Özellik | Açıklama |
-|---|---|
-| **Scope enforcement** | Scope dışı host'lara yapılan tool çağrıları bloklanır. OSINT servisleri (crt.sh, shodan, github vb.) otomatik allowlist'te. |
-| **Cost guardrail** | `max_session_cost_usd` aşılırsa döngü otomatik durur. OpenRouter'ın `usage.cost` alanından gerçek-zamanlı takip. |
-| **Session persistence** | Her turda `~/.hackeragent/sessions/<id>.json` — çökme sonrası `--resume last` ile devam. |
-| **Streaming yanıt** | Token-token ekrana yazılır — uzun Hermes yanıtlarını beklemezsiniz. UTF-8 multi-byte güvenli. |
-| **Structured parsers** | `nmap_scan_structured` ve `sqlmap_test_structured` → LLM raw çıktı parse etmek yerine yapılandırılmış JSON alır (daha doğru finding'ler). |
 
 ---
 
 ## 📁 Dosya Yapısı
 
 ```
-HackerAgent/
-├── hackeragent/                  # 🧠 Ana Python paketi (orkestratör)
-│   ├── __main__.py               # python -m hackeragent
-│   ├── core/
-│   │   ├── orchestrator.py       # OODA Loop motoru
-│   │   ├── llm_client.py         # OpenRouter client (tool use)
-│   │   ├── mcp_manager.py        # MCP server lifecycle (stdio)
-│   │   ├── tool_router.py        # tool_calls → MCP çağrıları
-│   │   ├── prompt_engine.py      # system_prompt + rules + skills
-│   │   └── config.py             # YAML + .env yükleyici
-│   ├── cli/
-│   │   ├── main.py               # argparse + REPL
-│   │   └── banner.py
-│   └── utils/logger.py
+cco/
+├── CLAUDE.md                    ← ANA DOSYA — hacker persona + metodoloji
+├── .env.example                 ← OpenRouter config şablonu
+├── .env                         ← Gerçek key (gitignore'da)
+├── install-cco.sh               ← Tek komut kurulum
+├── README.md
 │
-├── config.yaml                   # 🎛️ Merkezi konfigürasyon
-├── .env.example                  # Örnek environment variables
-├── system_prompt.md              # 🧠 Hacker persona & metodoloji
-├── pyproject.toml                # Python paketi
-├── requirements.txt
+├── mcp-servers/                 ← 6 MCP server (139+ tool)
+│   ├── mcp-kali-tools/          ← 76 güvenlik aracı + LLM tools
+│   ├── mcp-memory-server/       ← NetworkX Knowledge Graph + SQLite
+│   ├── mcp-ctf-platform/        ← CTFd/HTB/THM entegrasyonu
+│   ├── mcp-web-advanced/        ← 23 modern web/API saldırı aracı
+│   ├── mcp-rag-engine/          ← ChromaDB CVE/exploit/writeup search
+│   ├── mcp-telemetry/           ← Maliyet + call tracking
+│   └── mcp-browser/             ← Playwright (opsiyonel)
 │
-├── rules/                        # 📜 Operasyonel kurallar
+├── skills/                      ← 7 güvenlik skill'i
+│   ├── recon-enumeration/SKILL.md
+│   ├── web-exploit/SKILL.md
+│   ├── web-advanced/SKILL.md
+│   ├── binary-pwn/SKILL.md
+│   ├── crypto-forensics/SKILL.md
+│   ├── ctf-solver/SKILL.md
+│   └── report-generator/SKILL.md
+│
+├── workflows/                   ← Metodoloji dokümanları
+│   ├── bug-bounty-workflow.md
+│   ├── ctf-workflow.md
+│   ├── modern-web-workflow.md
+│   └── supervisor-workflow.md
+│
+├── rules/                       ← Güvenlik kuralları
 │   ├── scope-guard.md
 │   └── safety-rules.md
 │
-├── skills/                       # ⚡ 6 güvenlik skill'i
-│   ├── recon-enumeration/
-│   ├── web-exploit/
-│   ├── binary-pwn/
-│   ├── crypto-forensics/
-│   ├── ctf-solver/
-│   └── report-generator/
-│
-├── mcp-servers/                  # ⚙️ 5 MCP server
-│   ├── mcp-kali-tools/
-│   ├── mcp-ctf-platform/
-│   ├── mcp-memory-server/
-│   ├── mcp-telemetry/
-│   └── mcp-rag-engine/
-│
-├── scripts/                      # 🔄 Yardımcı scriptler
+├── scripts/                     ← Yardımcılar
 │   ├── attack_planner.py
 │   ├── recon_daemon.py
-│   └── swarm_orchestrator.py
+│   ├── swarm_orchestrator.py
+│   ├── budget-check.sh          ← OpenRouter bakiye sorgu
+│   └── model-list.sh            ← Kullanılabilir modeller
 │
-├── workflows/                    # 📋 İş akışları
-│   ├── bug-bounty-workflow.md
-│   ├── ctf-workflow.md
-│   └── supervisor-workflow.md
-│
-└── install.sh                    # 🚀 Tek komut kurulum
+└── system_prompt.md             ← (Referans — CLAUDE.md kaynağı)
 ```
+
+---
+
+## ⚙️ 6 MCP Server — 139+ Tool
+
+| Server | Tool Sayısı | Öne Çıkanlar |
+|--------|---|--------------|
+| `kali-tools` | 76 | `nmap_scan_structured`, `sqlmap_test_structured`, `ffuf`, `nuclei`, `hydra`, `qwen_analyze`, `generate_exploit_poc`, `parallel_llm_analyze`, `swarm_dispatch`, `interactsh_*` |
+| `memory-server` | 12 | `store_finding`, `store_credential`, `query_attack_paths`, `suggest_next_action` |
+| `ctf-platform` | 15 | `ctfd_list_challenges`, `htb_submit_flag`, `thm_get_room` |
+| `web-advanced` | 23 | GraphQL injection, JWT attacks, OAuth/SAML, HTTP smuggling, cache poisoning, prototype pollution, WebSocket fuzz, IDOR matrix |
+| `rag-engine` | 6 | `rag_search`, `rag_add_cve`, `rag_add_writeup` |
+| `telemetry` | 8 | `log_tool_call`, `log_llm_call`, `cost_summary`, `savings_report` |
 
 ---
 
 ## 🔧 Konfigürasyon
 
-### `.env` (hassas)
+### `.env`
 ```bash
-OPENROUTER_API_KEY=sk-or-v1-...
-CTFD_URL=https://ctfd.example.com
-CTFD_TOKEN=...
-HTB_TOKEN=...
+# Claude Code → OpenRouter
+ANTHROPIC_AUTH_TOKEN=sk-or-v1-...
+ANTHROPIC_BASE_URL=https://openrouter.ai/api
+ANTHROPIC_API_KEY=                   # Boş (OAuth devre dışı)
+
+# Alias mapping (Claude Code haiku/sonnet/opus)
+ANTHROPIC_DEFAULT_SONNET_MODEL=qwen/qwen3-next-80b-a3b-instruct
+ANTHROPIC_DEFAULT_HAIKU_MODEL=meta-llama/llama-3.3-70b-instruct
+ANTHROPIC_DEFAULT_OPUS_MODEL=qwen/qwen3-max
+
+# MCP tool içi modeller
+CCO_ANALYZE_MODEL=qwen/qwen3.6-plus
+CCO_EXPLOIT_MODEL=nousresearch/hermes-4-405b
+
+# Bütçe
+CCO_BUDGET_USD=10.00
+
+# Veri dizini
+CCO_HOME=~/.cco
 ```
 
-### `config.yaml` veya `~/.hackeragent/config.yaml` (ayarlar)
-```yaml
-llm:
-  models:
-    orchestrator: "qwen/qwen3.6-plus"
-    exploit_gen: "nousresearch/hermes-4-405b"
-  temperature: 0.3
-  max_tool_iterations: 25
-
-mcp_servers:
-  rag-engine:
-    enabled: false   # tekil server'ı kapatmak için
-```
-
-**Öncelik sırası:** `OPENROUTER_API_KEY` env var → `~/.hackeragent/config.yaml` → repo içindeki `config.yaml` → built-in varsayılanlar.
+### `~/.claude.json` (install-cco.sh tarafından oluşturulur)
+6 MCP server'ın command/args/env tanımları. Mevcut dosya yedeklenir, sadece
+`mcpServers` alanı güncellenir.
 
 ---
 
-## 🔀 v2.0'dan Geçiş
+## ⚠️ Önemli Notlar
 
-- **Silindi:** `setup_openrouter.sh`, `~/.claude/settings.json`, Claude Code CLI, Node.js, `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS`, `ANTHROPIC_BASE_URL` hile'si.
-- **Değişti:** `~/.claude/` → `~/.hackeragent/` (veri dizini). Eski path hala okunur (geriye uyumluluk) ama yeni yazımlar yeni konuma gider.
-- **Değişti:** `CLAUDE.md` → `system_prompt.md`. `.claude/rules/` → `rules/`.
-- **Eklendi:** `hackeragent` CLI, `config.yaml`, `pyproject.toml`, `.env.example`.
+### Thinking-only modeller
+`qwen/qwen3.6-plus` gibi bazı modeller **sadece `thinking` block** döndürür —
+Claude Code session modeli olarak kullanırsan `result` boş görünür. Bu modelleri
+sadece **MCP tool içinden** programatik olarak çağır (hali hazırda `qwen_analyze`
+bu modeli kullanıyor). Session modeli olarak `qwen3-next-80b-a3b-instruct`
+(non-thinking) veya `llama-3.3-70b-instruct` kullan.
+
+### Root/sudo ortamında Claude Code
+Container veya Kali root session'unda `IS_SANDBOX=1` env variable'ını set et;
+aksi halde `--dangerously-skip-permissions` reddedilir.
+
+### Bütçe ve maliyet takibi
+OpenRouter her yanıtın `usage.cost` alanını döndürür. `mcp-telemetry` server
+her LLM/tool çağrısını kaydeder. Session özeti için:
+```
+claude -p "telemetry ile bu session'daki toplam maliyeti göster"
+```
 
 ---
 
@@ -295,18 +231,5 @@ Bu sistem **yalnızca yasal ve etik** güvenlik testi amaçlarıyla kullanılmal
 
 ---
 
-## 📊 Kapsam
-
-- **200+ zafiyet tipi** (Web, Binary, Crypto, Forensics)
-- **150+ hazır payload** (SQLi, XSS, SSRF, LFI, CMDi, SSTI)
-- **40+ araç** MCP üzerinden
-- **2 LLM modeli** (Qwen 3.6 Plus + Hermes 4 405B)
-- **7 CTF kategorisi** için prosedürler
-- **CVSS hesaplama** ve rapor şablonları
-- **Kill Chain + OODA Loop** metodolojisi
-- **Kalıcı hafıza** (SQLite + NetworkX knowledge graph)
-- **RAG bilgi tabanı** (ChromaDB)
-
----
-
 *Developed for ethical security research and CTF competitions.*
+*4.327 lines of Python orchestration → 0. MCP tools: 139+. Model choices: unlimited.*

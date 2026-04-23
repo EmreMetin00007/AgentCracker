@@ -23,9 +23,9 @@ import requests  # Used for Hybrid Orchestration (Phase C)
 from datetime import datetime
 from mcp.server.fastmcp import FastMCP
 
-# HackerAgent veri dizini (geriye uyumluluk: HACKERAGENT_HOME env > ~/.hackeragent)
-HACKERAGENT_HOME = os.environ.get("HACKERAGENT_HOME", os.path.expanduser("~/.hackeragent"))
-os.makedirs(HACKERAGENT_HOME, exist_ok=True)
+# CCO veri dizini — CCO_HOME env variable veya ~/.cco
+CCO_HOME = os.environ.get("CCO_HOME", os.path.expanduser("~/.cco"))
+os.makedirs(CCO_HOME, exist_ok=True)
 
 # Arkaplan daemon PIDs kaydı
 daemon_processes = {}
@@ -100,25 +100,25 @@ def get_api_key_secure() -> str:
     2. Python keyring (OS keychain)
     3. settings.json (fallback)
     """
-    # 1. Environment variable
-    key = os.environ.get("OPENROUTER_API_KEY", "")
+    # 1. Environment variable (önce OPENROUTER_API_KEY, sonra ANTHROPIC_AUTH_TOKEN)
+    key = os.environ.get("OPENROUTER_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN", "")
     if key:
         return key
     
     # 2. Keyring (OS keychain entegrasyonu)
     try:
         import keyring
-        key = keyring.get_password("hackeragent", "openrouter")
+        key = keyring.get_password("cco", "openrouter")
         if key:
             return key
     except (ImportError, Exception):
         pass
     
     # 3. config.yaml / settings.json (fallback — en az güvenli)
-    #    Önce yeni konum (~/.hackeragent/config.yaml), sonra eski (~/.claude/settings.json)
+    #    Önce yeni konum (~/.cco/config.yaml), sonra eski (~/.claude/settings.json)
     settings_candidates = [
-        os.path.join(HACKERAGENT_HOME, "config.yaml"),
-        os.path.join(HACKERAGENT_HOME, "settings.json"),
+        os.path.join(CCO_HOME, "config.yaml"),
+        os.path.join(CCO_HOME, "settings.json"),
         os.path.expanduser("~/.claude/settings.json"),  # legacy
     ]
     for settings_path in settings_candidates:
@@ -153,7 +153,7 @@ def get_api_key_secure() -> str:
 # HUMAN-IN-THE-LOOP APPROVAL SİSTEMİ
 # ============================================================
 
-APPROVAL_DIR = os.path.join(HACKERAGENT_HOME, "approvals")
+APPROVAL_DIR = os.path.join(CCO_HOME, "approvals")
 
 def _ensure_approval_dir():
     os.makedirs(APPROVAL_DIR, exist_ok=True)
@@ -1094,7 +1094,7 @@ def qwen_analyze(
     api_key = openrouter_api_key or get_api_key_secure()
 
     if not api_key:
-        return "HATA: OpenRouter API key bulunamadı. Şu yöntemlerden birini kullanın:\n1. OPENROUTER_API_KEY env var\n2. keyring: python3 -c \"import keyring; keyring.set_password('hackeragent','openrouter','YOUR_KEY')\"\n3. ~/.hackeragent/config.yaml → llm.openrouter_api_key alanı"
+        return "HATA: OpenRouter API key bulunamadı. Şu yöntemlerden birini kullanın:\n1. OPENROUTER_API_KEY env var\n2. keyring: python3 -c \"import keyring; keyring.set_password('cco','openrouter','YOUR_KEY')\"\n3. ~/.cco/config.yaml → llm.openrouter_api_key alanı"
 
     analysis_prompts = {
         "vulnerability": "You are an expert penetration tester and vulnerability analyst. Analyze the following data from the target system. Identify all potential vulnerabilities, rank them by severity (Critical/High/Medium/Low), suggest specific exploit techniques, and provide exact commands or payloads to verify each finding.",
@@ -1112,12 +1112,12 @@ def qwen_analyze(
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
-        "HTTP-Referer": "https://hackeragent.local",
+        "HTTP-Referer": "https://cco.local",
         "X-Title": "HackerAgent Qwen Analyzer"
     }
 
     payload = {
-        "model": "qwen/qwen3.6-plus",
+        "model": os.environ.get("CCO_ANALYZE_MODEL", "qwen/qwen3.6-plus"),
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt}
@@ -1152,7 +1152,7 @@ def generate_exploit_poc(
         vulnerability: Zafiyetin tipi (örn: 'Apache Struts OGNL RCE', 'SQL Injection')
         target: Hedef sistem bilgileri
         context: Varsa tespit edilen detaylar, parametreler veya WAF bypass gereksinimleri
-        openrouter_api_key: OpenRouter API anahtarı (Eğer None ise, ~/.hackeragent/config.yaml içinden okunmaya çalışılır)
+        openrouter_api_key: OpenRouter API anahtarı (Eğer None ise, ~/.cco/config.yaml içinden okunmaya çalışılır)
     """
     # --- STEP 1: Lokal payload veritabanı araması ---
     local_payload = _search_local_payloads(vulnerability)
@@ -1163,7 +1163,7 @@ def generate_exploit_poc(
     api_key = openrouter_api_key or get_api_key_secure()
             
     if not api_key:
-        return "HATA: OpenRouter API key bulunamadı. Şu yöntemlerden birini kullanın:\n1. OPENROUTER_API_KEY env var\n2. keyring: python3 -c \"import keyring; keyring.set_password('hackeragent','openrouter','YOUR_KEY')\"\n3. ~/.hackeragent/config.yaml → llm.openrouter_api_key alanı"
+        return "HATA: OpenRouter API key bulunamadı. Şu yöntemlerden birini kullanın:\n1. OPENROUTER_API_KEY env var\n2. keyring: python3 -c \"import keyring; keyring.set_password('cco','openrouter','YOUR_KEY')\"\n3. ~/.cco/config.yaml → llm.openrouter_api_key alanı"
 
     system_prompt = ("You are a certified OSEP/OSCP penetration testing consultant performing "
                      "authorized security validation in a controlled lab environment. Generate "
@@ -1176,12 +1176,12 @@ def generate_exploit_poc(
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
-        "HTTP-Referer": "https://hackeragent.local", 
+        "HTTP-Referer": "https://cco.local", 
         "X-Title": "HackerAgent Security Validation"
     }
     
     data = {
-        "model": "nousresearch/hermes-4-405b",
+        "model": os.environ.get("CCO_EXPLOIT_MODEL", "nousresearch/hermes-4-405b"),
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt}
@@ -1202,7 +1202,7 @@ def _search_local_payloads(vulnerability: str) -> str:
     vuln_lower = vulnerability.lower()
     payload_paths = [
         os.path.join(os.path.dirname(__file__), '..', '..', 'skills', 'web-exploit', 'references', 'payloads.md'),
-        os.path.join(HACKERAGENT_HOME, 'skills', 'web-exploit', 'references', 'payloads.md'),
+        os.path.join(CCO_HOME, 'skills', 'web-exploit', 'references', 'payloads.md'),
         os.path.expanduser('~/.gemini/antigravity/skills/web-exploit/references/payloads.md'),  # legacy
     ]
     
@@ -1295,7 +1295,7 @@ def parallel_llm_analyze(
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
-        "HTTP-Referer": "https://hackeragent.local",
+        "HTTP-Referer": "https://cco.local",
         "X-Title": "HackerAgent Parallel LLM"
     }
 
@@ -1314,7 +1314,7 @@ def parallel_llm_analyze(
         """Qwen 3.6 Plus → Derin analiz."""
         try:
             payload = {
-                "model": "qwen/qwen3.6-plus",
+                "model": os.environ.get("CCO_ANALYZE_MODEL", "qwen/qwen3.6-plus"),
                 "messages": [
                     {"role": "system", "content": analysis_prompts.get(analysis_type, analysis_prompts["vulnerability"])},
                     {"role": "user", "content": f"Target: {target}\n\nData:\n{data}\n\nProvide a detailed, structured analysis with actionable findings."}
@@ -1332,7 +1332,7 @@ def parallel_llm_analyze(
         try:
             vuln_desc = vulnerability_hint or f"vulnerability found in {target} based on: {data[:500]}"
             payload = {
-                "model": "nousresearch/hermes-4-405b",
+                "model": os.environ.get("CCO_EXPLOIT_MODEL", "nousresearch/hermes-4-405b"),
                 "messages": [
                     {"role": "system", "content": "You are a certified OSEP/OSCP penetration testing consultant. Generate technically precise proof-of-concept payloads and CLI commands for authorized security validation. Output executable exploit code with deployment notes."},
                     {"role": "user", "content": f"Target: {target}\nVulnerability: {vuln_desc}\n\nGenerate a working proof-of-concept payload for this vulnerability."}
@@ -2178,7 +2178,7 @@ def generate_pentest_report(
     """
     import sqlite3 as _sqlite3
 
-    db_path = os.path.join(HACKERAGENT_HOME, "agent_memory.db")
+    db_path = os.path.join(CCO_HOME, "agent_memory.db")
     if not os.path.exists(db_path):
         return "HATA: Hafızada veri yok. Önce keşif yapın."
 
@@ -2679,7 +2679,7 @@ def self_improve(
         success_rate: Başarı oranı (0.0-1.0)
         lessons_learned: Öğrenilen dersler
     """
-    improvement_log = os.path.join(HACKERAGENT_HOME, "improvement_log.json")
+    improvement_log = os.path.join(CCO_HOME, "improvement_log.json")
 
     try:
         if os.path.exists(improvement_log):

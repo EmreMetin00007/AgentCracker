@@ -29,8 +29,8 @@ try:
 except Exception:
     HAS_PLAYWRIGHT = False
 
-HACKERAGENT_HOME = os.environ.get("HACKERAGENT_HOME", os.path.expanduser("~/.hackeragent"))
-SCREENSHOT_DIR = os.path.join(HACKERAGENT_HOME, "screenshots")
+CCO_HOME = os.environ.get("CCO_HOME", os.path.expanduser("~/.cco"))
+SCREENSHOT_DIR = os.path.join(CCO_HOME, "screenshots")
 os.makedirs(SCREENSHOT_DIR, exist_ok=True)
 
 mcp = FastMCP(

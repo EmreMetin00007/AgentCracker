@@ -19,9 +19,10 @@ env/
 build/
 dist/
 
-# ─── Çalışma zamanı veri dizinleri ─────────────────────────
-.claude/         # legacy v2 dizini (geriye uyumluluk)
-.hackeragent/    # v3 kullanıcı veri dizini
+# ─── CCO çalışma zamanı veri dizinleri ─────────────────────
+.cco/             # CCO user data (logs, memory, rag, approvals)
+.hackeragent/     # legacy v3 dizini (geriye uyumluluk)
+.claude/          # legacy v2 dizini
 *.db
 *.sqlite
 *.sqlite3
@@ -30,16 +31,17 @@ dist/
 .env
 .env.local
 .env.*
+!.env.example
 *.env
 credentials.json
 .credentials
 *.pem
 *.key
 
-# ─── Test / ad-hoc script kalıntıları ──────────────────────
-validate.py
-deep_audit.py
-idor_test.py
+# ─── Claude Code runtime/session kalıntıları ───────────────
+.claude.json
+.claude.json.bak.*
+/tmp/claude_test/
 
 # ─── Agent çalışma çıktıları ───────────────────────────────
 *.nmap
@@ -48,21 +50,8 @@ idor_test.py
 loot/
 screenshots/
 challenge_files/
--e 
-# Environment and credential files
-.env
-.env.*
-*.env
-credentials.json
-*.pem
-*.key
-.credentials
--e 
-# Environment and credential files
-.env
-.env.*
-*.env
-credentials.json
-*.pem
-*.key
-.credentials
+
+# ─── Ad-hoc test script'leri ───────────────────────────────
+validate.py
+deep_audit.py
+idor_test.py

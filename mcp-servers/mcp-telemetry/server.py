@@ -12,7 +12,7 @@ import os
 from datetime import datetime, timedelta
 from mcp.server.fastmcp import FastMCP
 
-DB_PATH = os.path.join(os.environ.get("HACKERAGENT_HOME", os.path.expanduser("~/.hackeragent")), "agent_telemetry.db")
+DB_PATH = os.path.join(os.environ.get("CCO_HOME", os.path.expanduser("~/.cco")), "agent_telemetry.db")
 
 mcp = FastMCP(
     "telemetry",

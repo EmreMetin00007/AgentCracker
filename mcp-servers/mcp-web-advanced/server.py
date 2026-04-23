@@ -62,9 +62,9 @@ mcp = FastMCP(
 
 # Rate limit / default timeouts
 DEFAULT_TIMEOUT = 15
-DEFAULT_UA = "HackerAgent/3.1 WebAdvanced (+https://hackeragent.local)"
-HACKERAGENT_HOME = os.path.expanduser(os.environ.get("HACKERAGENT_HOME", "~/.hackeragent"))
-LOG_DIR = os.path.join(HACKERAGENT_HOME, "web_advanced")
+DEFAULT_UA = "CCO/2.0 WebAdvanced (+https://cco.local)"
+CCO_HOME = os.path.expanduser(os.environ.get("CCO_HOME", "~/.cco"))
+LOG_DIR = os.path.join(CCO_HOME, "web_advanced")
 os.makedirs(LOG_DIR, exist_ok=True)
 
 
@@ -632,7 +632,7 @@ def cache_poisoning_probe(url: str, test_headers: str = "", proxy: str = "") -> 
                   if any(cw in k.lower() for cw in ["cache", "age", "x-cache", "cf-"])}
 
     findings: list[str] = []
-    canary = f"hackeragent{int(time.time())}.local"
+    canary = f"cco{int(time.time())}.local"
 
     for h in hdr_names:
         try:
@@ -1182,7 +1182,7 @@ def api_param_discover(url: str, method: str = "GET", threads: int = 20,
     found = []
 
     def _probe(p: str):
-        canary = f"hackeragent{int(time.time() * 1000) % 100000}"
+        canary = f"cco{int(time.time() * 1000) % 100000}"
         try:
             if method == "GET":
                 sep = "&" if "?" in url else "?"
