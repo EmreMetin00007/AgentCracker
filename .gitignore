@@ -55,3 +55,12 @@ challenge_files/
 validate.py
 deep_audit.py
 idor_test.py
+-e 
+# Environment and credential files
+.env
+.env.*
+*.env
+credentials.json
+*.pem
+*.key
+.credentials
